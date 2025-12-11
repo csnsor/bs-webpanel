@@ -1,149 +1,173 @@
-const services = [
-  {
-    name: "Edge Network",
-    status: "operational",
-    uptime: "99.99%",
-    latency: 18,
-    trend: [14, 16, 15, 18, 17, 16, 18, 19, 17, 16],
-  },
-  {
-    name: "API Gateway",
-    status: "operational",
-    uptime: "99.98%",
-    latency: 32,
-    trend: [28, 30, 29, 32, 33, 31, 30, 34, 33, 32],
-  },
-  {
-    name: "Authentication",
-    status: "degraded",
-    uptime: "99.4%",
-    latency: 86,
-    trend: [60, 65, 70, 74, 78, 80, 84, 86, 88, 86],
-  },
-  {
-    name: "Realtime Channels",
-    status: "operational",
-    uptime: "99.97%",
-    latency: 42,
-    trend: [40, 38, 39, 42, 45, 44, 42, 41, 40, 42],
-  },
-  {
-    name: "Data Platform",
-    status: "operational",
-    uptime: "99.92%",
-    latency: 58,
-    trend: [52, 54, 56, 58, 60, 59, 58, 57, 58, 58],
-  },
-  {
-    name: "Payments",
-    status: "partial",
-    uptime: "99.1%",
-    latency: 122,
-    trend: [80, 90, 95, 100, 120, 125, 130, 128, 124, 122],
-  },
-];
+const grid = document.getElementById("ban-grid");
+const searchInput = document.getElementById("search");
+const clearSearchBtn = document.getElementById("clear-search");
+const refreshBtn = document.getElementById("refresh");
+const refreshCountdown = document.getElementById("refresh-countdown");
+const activeCountEl = document.getElementById("active-count");
+const totalCountEl = document.getElementById("total-count");
+const lastUpdatedEl = document.getElementById("last-updated");
 
-const incidents = [
-  {
-    title: "Auth token refresh latency",
-    severity: "minor",
-    time: "Today, 11:12 UTC",
-    detail: "Elevated latency for token refresh in EU region. Mitigation in place while cache warms.",
-  },
-  {
-    title: "Payments webhook retries",
-    severity: "major",
-    time: "Yesterday, 22:04 UTC",
-    detail: "Intermittent 5xx responses from third-party provider. Automatic retries limited impact.",
-  },
-  {
-    title: "Edge routing update",
-    severity: "info",
-    time: "Yesterday, 08:40 UTC",
-    detail: "New routing table deployed to reduce cross-region hops and improve cold starts.",
-  },
-];
+const REFRESH_MS = 20000;
+const avatarPlaceholder =
+  "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%' stop-color='%233ed4c2'/><stop offset='100%' stop-color='%235b8dfd'/></linearGradient></defs><rect width='160' height='160' rx='20' fill='url(%23g)'/><text x='50%' y='54%' text-anchor='middle' font-family='Arial' font-size='64' fill='%23041020'>RBX</text></svg>";
 
-const maintenance = [
-  {
-    title: "Database cluster maintenance",
-    window: "Dec 15, 01:00–02:30 UTC",
-    note: "Failover testing with automatic retries for write operations.",
-  },
-  {
-    title: "Realtime broker upgrade",
-    window: "Dec 17, 04:00–04:20 UTC",
-    note: "Rolling restart; expected sub-200 ms reconnect for active sockets.",
-  },
-];
+let bans = [];
+const profileCache = new Map();
+let refreshTimer = null;
+let countdownTimer = null;
+let nextRefreshAt = null;
 
-const statusMap = {
-  operational: { label: "Operational", cls: "ok" },
-  degraded: { label: "Degraded", cls: "warn" },
-  partial: { label: "Partial", cls: "warn" },
-  down: { label: "Down", cls: "down" },
-};
+function escapeHtml(str = "") {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
-const servicesEl = document.getElementById("services");
-const incidentsEl = document.getElementById("incidents");
-const maintenanceEl = document.getElementById("maintenance");
-
-function sparklinePath(values, width, height) {
-  const max = Math.max(...values);
-  const min = Math.min(...values);
-  const norm = values.map((v) => {
-    const range = max - min || 1;
-    return height - ((v - min) / range) * height;
+function formatTime(iso) {
+  if (!iso) return "Unknown";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Unknown";
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
+}
 
-  return norm
-    .map((v, i) => {
-      const x = (i / (values.length - 1)) * width;
-      return `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${v.toFixed(1)}`;
+function relativeTime(iso) {
+  if (!iso) return "";
+  const diff = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(diff)) return "";
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+async function fetchProfile(userId) {
+  if (!userId) {
+    return { username: "Unknown", displayName: "Unknown user", avatar: avatarPlaceholder };
+  }
+  if (profileCache.has(userId)) {
+    return profileCache.get(userId);
+  }
+
+  const profile = { username: `User ${userId}`, displayName: "", avatar: avatarPlaceholder };
+
+  try {
+    const res = await fetch(`https://users.roblox.com/v1/users/${userId}`);
+    if (res.ok) {
+      const data = await res.json();
+      profile.username = data.name || profile.username;
+      profile.displayName = data.displayName || profile.username;
+    }
+  } catch (err) {
+    console.warn("Failed to load user profile", userId, err);
+  }
+
+  try {
+    const res = await fetch(
+      `https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=150x150&format=Png&isCircular=true`
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const thumb = (data.data && data.data[0]) || {};
+      if (thumb.imageUrl) {
+        profile.avatar = thumb.imageUrl;
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to load avatar", userId, err);
+  }
+
+  profileCache.set(userId, profile);
+  return profile;
+}
+
+async function enrichLogs(logs) {
+  const withProfiles = await Promise.all(
+    logs.map(async (log) => {
+      const profile = await fetchProfile(log.userId);
+      return { ...log, profile };
     })
-    .join(" ");
+  );
+
+  return withProfiles.sort((a, b) => new Date(b.startTime || b.createTime).getTime() - new Date(a.startTime || a.createTime).getTime());
 }
 
-function renderSpark(values, width = 120, height = 40) {
-  const path = sparklinePath(values, width, height);
-  return `
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="spark-gradient" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stop-color="rgba(62, 212, 194, 0.6)"/>
-          <stop offset="100%" stop-color="rgba(91, 141, 253, 0.0)"/>
-        </linearGradient>
-      </defs>
-      <path d="${path}" stroke="rgba(62, 212, 194, 0.9)" stroke-width="2" fill="none" stroke-linecap="round"/>
-      <path d="${path} L ${width} ${height} L 0 ${height} Z" fill="url(#spark-gradient)" opacity="0.4"/>
-    </svg>
-  `;
+function formatReason(text = "") {
+  if (!text.trim()) return "No public reason provided.";
+  const clean = escapeHtml(text).replace(/\n+/g, "<br>");
+  return clean;
 }
 
-function renderServices() {
-  servicesEl.innerHTML = services
-    .map((s) => {
-      const status = statusMap[s.status] || statusMap.operational;
+function statusPill(active) {
+  return `<span class="status-pill ${active ? "live" : "ended"}">${active ? "Active" : "Ended"}</span>`;
+}
+
+function reasonPill(shortReason = "") {
+  const key = shortReason.toLowerCase().replace(/\s+/g, "-") || "other";
+  return `<span class="pill reason ${key}">${escapeHtml(shortReason || "Other")}</span>`;
+}
+
+function renderBans(list) {
+  if (!list.length) {
+    grid.innerHTML = `<div class="empty">No bans found for that search. Try another keyword.</div>`;
+    return;
+  }
+
+  grid.innerHTML = list
+    .map((log) => {
+      const profile = log.profile || {};
+      const name = escapeHtml(profile.displayName || profile.username || `User ${log.userId}`);
+      const username = escapeHtml(profile.username || "unknown");
+      const mod = log.moderatorId ? `Moderator ${escapeHtml(log.moderatorId)}` : "Unknown moderator";
+      const started = formatTime(log.startTime || log.createTime);
+      const relative = relativeTime(log.startTime || log.createTime);
+
       return `
-        <article class="service-card">
-          <div class="title">
-            <div>
-              <p class="eyebrow">${s.uptime} uptime</p>
-              <h4>${s.name}</h4>
+        <article class="ban-card ${log.active ? "active" : "expired"}">
+          <div class="card-head">
+            <div class="avatar">
+              <img src="${profile.avatar || avatarPlaceholder}" alt="Avatar for ${name}" loading="lazy">
             </div>
-            <span class="badge ${status.cls}">
-              <span class="dot"></span>
-              ${status.label}
-            </span>
+            <div class="identity">
+              <div class="name-row">
+                <h4>${name}</h4>
+                ${reasonPill(log.shortReason)}
+              </div>
+              <p class="muted">@${username} • ID ${log.userId || "?"}</p>
+            </div>
+            ${statusPill(log.active)}
           </div>
-          <div class="service-metrics">
-            <div class="metric">
-              <span class="label">Latency</span>
-              <span class="value">${s.latency} ms</span>
+          <div class="card-body">
+            <div class="pair">
+              <span class="label">Moderator</span>
+              <span class="value">${mod}</span>
             </div>
-            <div class="metric">
-              <span class="label">Trend</span>
-              <div class="mini-spark">${renderSpark(s.trend)}</div>
+            <div class="pair">
+              <span class="label">Started</span>
+              <span class="value">${started}${relative ? ` • ${relative}` : ""}</span>
+            </div>
+            <div class="pair">
+              <span class="label">Public reason</span>
+              <p class="reason" title="${escapeHtml(log.displayReason || log.privateReason || "No reason")}">${formatReason(
+        log.displayReason || log.privateReason || ""
+      )}</p>
+            </div>
+            <div class="pair meta">
+              <span class="label">Flags</span>
+              <span class="chips">
+                <span class="chip">${log.excludeAltAccounts ? "Exclude alts" : "Applies to alts"}</span>
+                <span class="chip subtle">Ref ${escapeHtml(log.userPath || "users")}</span>
+              </span>
             </div>
           </div>
         </article>
@@ -152,103 +176,108 @@ function renderServices() {
     .join("");
 }
 
-function renderIncidents() {
-  incidentsEl.innerHTML = incidents
-    .map(
-      (i) => `
-      <article class="timeline-item">
-        <div class="summary">
-          <div>
-            <p class="eyebrow">${i.time}</p>
-            <h4>${i.title}</h4>
-          </div>
-          <span class="pill ${i.severity}">${i.severity}</span>
-        </div>
-        <p>${i.detail}</p>
-      </article>
-    `
-    )
-    .join("");
+function renderCounts(list) {
+  const active = list.filter((b) => b.active).length;
+  activeCountEl.textContent = active;
+  totalCountEl.textContent = list.length;
+  if (lastUpdatedEl.dataset.ts) {
+    lastUpdatedEl.textContent = formatTime(lastUpdatedEl.dataset.ts);
+  }
 }
 
-function renderMaintenance() {
-  maintenanceEl.innerHTML = maintenance
-    .map(
-      (m) => `
-      <article class="maintenance-card">
-        <h4>${m.title}</h4>
-        <p class="time">${m.window}</p>
-        <p class="muted">${m.note}</p>
-      </article>
-    `
-    )
-    .join("");
-}
-
-function updateSummary() {
-  const degraded = services.some((s) => s.status === "degraded" || s.status === "partial");
-  const down = services.some((s) => s.status === "down");
-  const overall = document.getElementById("overall-status");
-  const pill = overall.closest(".status-pill");
-
-  if (down) {
-    pill.className = "status-pill danger";
-    overall.textContent = "Service disruption";
-  } else if (degraded) {
-    pill.className = "status-pill warn";
-    overall.textContent = "Minor degradation";
-  } else {
-    pill.className = "status-pill success";
-    overall.textContent = "All systems operational";
+function applySearch() {
+  const q = (searchInput.value || "").trim().toLowerCase();
+  if (!q) {
+    renderBans(bans);
+    renderCounts(bans);
+    return;
   }
 
-  document.getElementById("updated-at").textContent = new Date().toUTCString();
-  document.getElementById("incidents-count").textContent = incidents.length;
+  const filtered = bans.filter((log) => {
+    const profile = log.profile || {};
+    const haystack = [
+      profile.displayName,
+      profile.username,
+      log.userId,
+      log.moderatorId,
+      log.shortReason,
+      log.displayReason,
+      log.privateReason,
+    ]
+      .join(" ")
+      .toLowerCase();
 
-  const avgLatency = Math.round(
-    services.reduce((sum, s) => sum + s.latency, 0) / services.length
-  );
-  document.getElementById("latency").textContent = `${avgLatency} ms`;
-}
-
-function renderHeroSparkline() {
-  const target = document.getElementById("hero-sparkline");
-  const values = Array.from({ length: 12 }, () => 40 + Math.random() * 30);
-  const width = 320;
-  const height = 220;
-  const path = sparklinePath(values, width, height);
-
-  target.innerHTML = `
-    <svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="gradient" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stop-color="rgba(62, 212, 194, 0.65)"/>
-          <stop offset="100%" stop-color="rgba(91, 141, 253, 0.0)"/>
-        </linearGradient>
-      </defs>
-      <path d="${path}" stroke="rgba(255,255,255,0.5)" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-      <path d="${path} L ${width} ${height} L 0 ${height} Z" fill="url(#gradient)" />
-    </svg>
-  `;
-}
-
-function simulateLive() {
-  services.forEach((s) => {
-    const jitter = Math.random() * 6 - 3;
-    s.latency = Math.max(12, Math.round(s.latency + jitter));
-    s.trend.shift();
-    s.trend.push(Math.max(12, s.latency + Math.random() * 6 - 3));
+    return haystack.includes(q);
   });
 
-  renderServices();
-  updateSummary();
+  renderBans(filtered);
+  renderCounts(filtered);
 }
 
-document.getElementById("refresh").addEventListener("click", simulateLive);
+async function fetchBans() {
+  try {
+    const res = await fetch("/api/bans");
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || "Failed to fetch ban logs");
+    }
 
-renderServices();
-renderIncidents();
-renderMaintenance();
-renderHeroSparkline();
-updateSummary();
-setInterval(simulateLive, 8000);
+    bans = await enrichLogs(data.logs || []);
+    lastUpdatedEl.dataset.ts = new Date().toISOString();
+    lastUpdatedEl.textContent = formatTime(lastUpdatedEl.dataset.ts);
+    renderCounts(bans);
+    applySearch();
+  } catch (err) {
+    console.error(err);
+    grid.innerHTML = `<div class="error">Could not load ban logs. ${escapeHtml(err.message)}</div>`;
+  } finally {
+    nextRefreshAt = Date.now() + REFRESH_MS;
+  }
+}
+
+function startAutoRefresh() {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+  }
+  refreshTimer = setInterval(fetchBans, REFRESH_MS);
+}
+
+function startCountdown() {
+  if (countdownTimer) {
+    clearInterval(countdownTimer);
+  }
+  countdownTimer = setInterval(() => {
+    if (!nextRefreshAt) {
+      refreshCountdown.textContent = "—";
+      return;
+    }
+    const diff = nextRefreshAt - Date.now();
+    if (diff <= 0) {
+      refreshCountdown.textContent = "now";
+      return;
+    }
+    const seconds = Math.ceil(diff / 1000);
+    refreshCountdown.textContent = `${seconds}s`;
+  }, 500);
+}
+
+function bindEvents() {
+  searchInput.addEventListener("input", applySearch);
+  clearSearchBtn.addEventListener("click", () => {
+    searchInput.value = "";
+    applySearch();
+  });
+  refreshBtn.addEventListener("click", () => {
+    nextRefreshAt = Date.now() + REFRESH_MS;
+    fetchBans();
+  });
+}
+
+async function init() {
+  bindEvents();
+  startCountdown();
+  await fetchBans();
+  startAutoRefresh();
+}
+
+init();

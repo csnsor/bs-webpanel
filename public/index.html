@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Beacon Status</title>
+  <title>Beacon Ban Directory</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
@@ -22,50 +22,59 @@
       <div class="brand-mark">BS</div>
       <div>
         <p class="eyebrow">Beacon Systems</p>
-        <h1>Status</h1>
+        <h1>Ban Directory</h1>
+        <p class="muted">Live Roblox enforcement feed</p>
       </div>
     </div>
-    <div class="actions">
-      <button id="refresh" class="ghost">Refresh now</button>
-      <button class="primary">Subscribe</button>
-    </div>
+    <span class="live-pill">
+      <span class="dot"></span>
+      Live updates
+    </span>
   </header>
 
-  <main>
-    <section class="panel status-hero">
-      <div>
-        <p class="eyebrow">Live overview</p>
-        <div class="status-pill success">
-          <span class="dot"></span>
-          <span id="overall-status">All systems operational</span>
+  <main class="layout">
+    <section class="panel hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Roblox Moderation</p>
+        <h2>Live ban directory</h2>
+        <p class="lede">Streaming enforcement logs for Universe #6765805766 with avatars, moderators, and shortened reasons.</p>
+
+        <div class="search-row">
+          <div class="search">
+            <input id="search" type="search" placeholder="Search by user id, username, moderator, or reason...">
+            <button id="clear-search" class="ghost">Clear</button>
+          </div>
+          <div class="live-chip">
+            <span class="dot"></span>
+            Auto refresh in <span id="refresh-countdown">—</span>
+          </div>
         </div>
-        <h2>Transparent reliability, updated in real-time.</h2>
-        <p class="lede">Track infrastructure health, response times, and maintenance in a single fluent dashboard.</p>
+
         <div class="hero-meta">
           <div class="meta-card">
-            <p class="eyebrow">Uptime</p>
-            <h3 id="uptime">99.99%</h3>
-            <p class="muted">Last 30 days</p>
+            <p class="eyebrow">Active bans</p>
+            <h3 id="active-count">–</h3>
+            <p class="muted">Currently enforced</p>
           </div>
           <div class="meta-card">
-            <p class="eyebrow">Latency</p>
-            <h3 id="latency">34 ms</h3>
-            <p class="muted">Global median</p>
+            <p class="eyebrow">Total fetched</p>
+            <h3 id="total-count">–</h3>
+            <p class="muted">Last update</p>
           </div>
           <div class="meta-card">
-            <p class="eyebrow">Incidents</p>
-            <h3 id="incidents-count">0</h3>
-            <p class="muted">Past 24h</p>
+            <p class="eyebrow">Last sync</p>
+            <h3 id="last-updated">–</h3>
+            <p class="muted">Roblox ban logs</p>
           </div>
         </div>
       </div>
       <div class="hero-visual">
         <div class="halo"></div>
         <div class="pulse" id="pulse"></div>
-        <div class="sparkline" id="hero-sparkline"></div>
         <div class="update-time">
-          <p class="eyebrow">Last updated</p>
-          <h4 id="updated-at"></h4>
+          <p class="eyebrow">BAN_API_KEY</p>
+          <h4>Server-signed requests</h4>
+          <p class="muted">Reading Roblox logs securely and streaming them here.</p>
         </div>
       </div>
     </section>
@@ -73,83 +82,16 @@
     <section class="panel">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Services</p>
-          <h3>Coverage across the stack</h3>
+          <p class="eyebrow">Directory</p>
+          <h3>Ban log</h3>
         </div>
-        <p class="muted">Hover for live health signals.</p>
-      </div>
-      <div id="services" class="service-grid"></div>
-    </section>
-
-    <section class="columns">
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">Incident log</p>
-            <h3>Recent activity</h3>
-          </div>
-          <p class="muted">Newest first</p>
-        </div>
-        <div id="incidents" class="timeline"></div>
-      </div>
-
-      <div class="stack">
-        <div class="panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Planned</p>
-              <h3>Maintenance windows</h3>
-            </div>
-            <p class="muted">UTC time</p>
-          </div>
-          <div id="maintenance" class="maintenance"></div>
-        </div>
-        <div class="panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">SLOs</p>
-              <h3>Commitments</h3>
-            </div>
-            <p class="muted">Enforced automatically</p>
-          </div>
-          <div class="slos">
-            <div>
-              <p class="eyebrow">Core uptime</p>
-              <div class="bar">
-                <div class="fill" style="width: 99.98%"></div>
-              </div>
-              <span class="muted">Target 99.9%</span>
-            </div>
-            <div>
-              <p class="eyebrow">API latency (p95)</p>
-              <div class="bar">
-                <div class="fill accent" style="width: 92%"></div>
-              </div>
-              <span class="muted">Target &lt; 150 ms</span>
-            </div>
-            <div>
-              <p class="eyebrow">Support response</p>
-              <div class="bar">
-                <div class="fill warm" style="width: 86%"></div>
-              </div>
-              <span class="muted">Target &lt; 1h</span>
-            </div>
-          </div>
+        <div class="panel-actions">
+          <button id="refresh" class="ghost">Refresh now</button>
         </div>
       </div>
+      <div id="ban-grid" class="ban-grid"></div>
     </section>
   </main>
-
-  <footer class="footer">
-    <div>
-      <p class="eyebrow">Beacon</p>
-      <p class="muted">Built for proactive transparency. Subscribe to stay ahead of change.</p>
-    </div>
-    <div class="footer-actions">
-      <button class="ghost">RSS Feed</button>
-      <button class="primary">Get updates</button>
-    </div>
-  </footer>
 
   <script src="script.js"></script>
 </body>

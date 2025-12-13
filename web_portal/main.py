@@ -10,6 +10,8 @@ import httpx
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from starlette.responses import Response
 from itsdangerous import URLSafeSerializer, BadSignature
 from dotenv import load_dotenv
 import logging
@@ -66,6 +68,7 @@ _ip_requests: Dict[str, List[float]] = {}  # {ip: [timestamps]}
 _ban_first_seen: Dict[str, float] = {}  # {user_id: first time we saw the ban}
 _appeal_locked: Dict[str, bool] = {}  # {user_id: True if appealed already}
 _user_tokens: Dict[str, str] = {}  # {user_id: last OAuth access token}
+_processed_appeals: Dict[str, float] = {}  # {appeal_id: timestamp_processed}
 APPEAL_COOLDOWN_SECONDS = int(os.getenv("APPEAL_COOLDOWN_SECONDS", "300"))  # 5 minutes by default
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "900"))  # sessions expire after 15 minutes
 APPEAL_IP_MAX_REQUESTS = int(os.getenv("APPEAL_IP_MAX_REQUESTS", "8"))
@@ -163,6 +166,44 @@ def render_page(title: str, body_html: str) -> str:
       </body>
     </html>
     """
+
+def wants_html(request: Request) -> bool:
+    accept = request.headers.get("accept", "")
+    return "text/html" in accept or "*/*" in accept
+
+
+def render_error(title: str, message: str, status_code: int = 400) -> HTMLResponse:
+    content = f"""
+      <div class="card status danger">
+        <h1 style="margin-bottom:10px;">{html.escape(title)}</h1>
+        <p>{html.escape(message)}</p>
+        <a class="btn" href="/">Back home</a>
+      </div>
+    """
+    return HTMLResponse(render_page(title, content), status_code=status_code, headers={"Cache-Control": "no-store"})
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if wants_html(request):
+        msg = exc.detail if isinstance(exc.detail, str) else "Something went wrong."
+        return render_error("Request failed", msg, exc.status_code)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    if wants_html(request):
+        return render_error("Invalid input", "Please check the form and try again.", 422)
+    return JSONResponse(status_code=422, content={"detail": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logging.exception("Unhandled error: %s", exc)
+    if wants_html(request):
+        return render_error("Server error", "Unexpected error. Please try again.", 500)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 def oauth_authorize_url(state: str) -> str:
@@ -513,6 +554,18 @@ async def respond_ephemeral(content: str) -> JSONResponse:
     )
 
 
+async def respond_ephemeral_embed(title: str, description: str, color: int = 0xE67E22) -> JSONResponse:
+    return JSONResponse(
+        {
+            "type": 4,
+            "data": {
+                "flags": 1 << 6,
+                "embeds": [{"title": title, "description": description, "color": color}],
+            },
+        }
+    )
+
+
 async def edit_original(message: dict, content: Optional[str] = None, color: int = 0x2ecc71):
     embeds = message.get("embeds") or []
     if embeds:
@@ -600,12 +653,16 @@ async def interactions(request: Request):
         # Check permissions
         roles = set(map(int, member.get("roles", [])))
         if MODERATOR_ROLE_ID not in roles:
-            return await respond_ephemeral("You do not have permission to handle appeals.")
+            return await respond_ephemeral_embed(
+                "Not allowed",
+                "You don’t have the moderator role required to handle appeals.",
+                0xE74C3C,
+            )
 
         try:
             action, appeal_id, user_id = custom_id.split(":")
         except ValueError:
-            return await respond_ephemeral("Invalid interaction payload.")
+            return await respond_ephemeral_embed("Invalid request", "Bad interaction payload.")
 
         # Extract message details for editing later
         channel_id = payload["channel_id"]
@@ -614,31 +671,26 @@ async def interactions(request: Request):
 
         # Basic replay/spam guard: ignore if custom_id format looks wrong or missing ids
         if not appeal_id or not user_id or action not in {"web_appeal_accept", "web_appeal_decline"}:
-            return await respond_ephemeral("Invalid interaction data.")
+            return await respond_ephemeral_embed("Invalid request", "Malformed interaction data.")
 
         # Run the heavy work in background to avoid interaction timeouts.
         async def handle_accept():
             try:
+                # idempotency: ignore double clicks / retries
+                if appeal_id in _processed_appeals:
+                    return
+                _processed_appeals[appeal_id] = time.time()
+
                 async with httpx.AsyncClient() as client:
-                    await client.delete(
+                    unban_resp = await client.delete(
                         f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/bans/{user_id}",
                         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
                     )
-                    await client.post(
-                        f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
-                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                        json={
-                            "content": (
-                                f"Appeal `{appeal_id}` accepted by <@{member.get('user', {}).get('id')}>. "
-                                f"User <@{user_id}> unbanned."
-                            )
-                        },
-                    )
-                    # Delete the original appeal message
-                    await client.delete(
-                        f"{DISCORD_API_BASE}/channels/{payload['channel_id']}/messages/{payload['message']['id']}",
-                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                    )
+
+                # Update the original appeal message (REMOVE BUTTONS + STATUS)
+                await update_appeal_message(channel_id, message_id, original_embed, "accepted", moderator_id)
+
+                # DM user (best effort)
                 dm_delivered = await dm_user(
                     user_id,
                     {
@@ -648,11 +700,15 @@ async def interactions(request: Request):
                     },
                 )
 
-                # Update the moderator message (Visual feedback & Remove buttons)
-                await update_appeal_message(channel_id, message_id, original_embed, "accepted", moderator_id)
+                # Log once
+                log_content = f"Appeal `{appeal_id}` **ACCEPTED** by <@{moderator_id}>. "
+                if unban_resp.status_code in (200, 204):
+                    log_content += f"User <@{user_id}> unbanned."
+                elif unban_resp.status_code == 404:
+                    log_content += f"User <@{user_id}> was not banned (404)."
+                else:
+                    log_content += f"Unban API returned {unban_resp.status_code}."
 
-                # Log to log channel
-                log_content = f"Appeal `{appeal_id}` **ACCEPTED** by <@{moderator_id}>. User <@{user_id}> unbanned."
                 if not dm_delivered:
                     log_content += " (DM failed)."
 
@@ -667,7 +723,10 @@ async def interactions(request: Request):
 
         async def handle_decline():
             try:
-                # 1. DM the user
+                if appeal_id in _processed_appeals:
+                    return
+                _processed_appeals[appeal_id] = time.time()
+
                 dm_delivered = await dm_user(
                     user_id,
                     {
@@ -677,10 +736,8 @@ async def interactions(request: Request):
                     },
                 )
 
-                # 2. Update the moderator message (Visual feedback & Remove buttons)
                 await update_appeal_message(channel_id, message_id, original_embed, "declined", moderator_id)
 
-                # 3. Log to log channel
                 log_content = f"Appeal `{appeal_id}` **DECLINED** by <@{moderator_id}>."
                 if not dm_delivered:
                     log_content += " (DM failed)."

@@ -608,38 +608,6 @@ async def dm_user(user_id: str, embed: dict):
         return delivered
 
 
-async def update_appeal_message(channel_id: str, message_id: str, old_embed: dict, status: str, moderator_id: str):
-    """
-    Edits the original appeal message to remove buttons and update status.
-    """
-    new_embed = copy.deepcopy(old_embed or {})
-
-    if status == "accepted":
-        color = 0x2ECC71  # Green
-        title_suffix = " (ACCEPTED)"
-    else:
-        color = 0xE74C3C  # Red
-        title_suffix = " (DECLINED)"
-
-    new_embed["color"] = color
-    new_embed["title"] = new_embed.get("title", "Appeal") + title_suffix
-
-    # Add a field showing who handled it
-    new_embed["fields"] = new_embed.get("fields", []) + [
-        {"name": "Action Taken", "value": f"{status.title()} by <@{moderator_id}>", "inline": False}
-    ]
-
-    async with httpx.AsyncClient() as client:
-        await client.patch(
-            f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}",
-            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-            json={
-                "embeds": [new_embed],
-                "components": [],  # Removes the buttons
-            },
-        )
-
-
 @app.post("/interactions")
 async def interactions(request: Request):
     body = await request.body()
@@ -656,6 +624,12 @@ async def interactions(request: Request):
         member = payload.get("member") or {}
         user_obj = member.get("user") or {}
         moderator_id = user_obj.get("id")
+
+        # prune old processed appeals to avoid unbounded growth
+        now = time.time()
+        for k in list(_processed_appeals.keys()):
+            if now - _processed_appeals[k] > 3600:
+                _processed_appeals.pop(k, None)
 
         # Check permissions
         roles = set(map(int, member.get("roles", [])))
@@ -681,6 +655,24 @@ async def interactions(request: Request):
         if not appeal_id or not user_id or action not in {"web_appeal_accept", "web_appeal_decline"}:
             return await respond_ephemeral_embed("Invalid request", "Malformed interaction data.")
 
+        # Prepare immediate UI update embed (buttons removed)
+        def updated_embed(status: str) -> dict:
+            embed = copy.deepcopy(original_embed) or {}
+            if status == "accepted":
+                color = 0x2ECC71
+                suffix = " (ACCEPTED)"
+                label = "Accepted"
+            else:
+                color = 0xE74C3C
+                suffix = " (DECLINED)"
+                label = "Declined"
+            embed["color"] = color
+            embed["title"] = embed.get("title", "Appeal") + suffix
+            embed["fields"] = embed.get("fields", []) + [
+                {"name": "Action Taken", "value": f"{label} by <@{moderator_id}>", "inline": False}
+            ]
+            return embed
+
         # Run the heavy work in background to avoid interaction timeouts.
         async def handle_accept():
             try:
@@ -694,9 +686,6 @@ async def interactions(request: Request):
                         f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/bans/{user_id}",
                         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
                     )
-
-                # Update the original appeal message (REMOVE BUTTONS + STATUS)
-                await update_appeal_message(channel_id, message_id, original_embed, "accepted", moderator_id)
 
                 # DM user (best effort)
                 dm_delivered = await dm_user(
@@ -744,8 +733,6 @@ async def interactions(request: Request):
                     },
                 )
 
-                await update_appeal_message(channel_id, message_id, original_embed, "declined", moderator_id)
-
                 log_content = f"Appeal `{appeal_id}` **DECLINED** by <@{moderator_id}>."
                 if not dm_delivered:
                     log_content += " (DM failed)."
@@ -761,11 +748,21 @@ async def interactions(request: Request):
 
         if action == "web_appeal_accept":
             asyncio.create_task(handle_accept())
-            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE
+            return JSONResponse(
+                {
+                    "type": 7,
+                    "data": {"embeds": [updated_embed("accepted")], "components": []},
+                }
+            )
 
         if action == "web_appeal_decline":
             asyncio.create_task(handle_decline())
-            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE
+            return JSONResponse(
+                {
+                    "type": 7,
+                    "data": {"embeds": [updated_embed("declined")], "components": []},
+                }
+            )
 
     return JSONResponse({"type": 4, "data": {"content": "Unsupported interaction", "flags": 1 << 6}})
 

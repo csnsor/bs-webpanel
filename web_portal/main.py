@@ -241,20 +241,24 @@ def enforce_ip_rate_limit(ip: str):
 
 
 async def exchange_code_for_token(code: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{DISCORD_API_BASE}/oauth2/token",
-            data={
-                "client_id": DISCORD_CLIENT_ID,
-                "client_secret": DISCORD_CLIENT_SECRET,
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": DISCORD_REDIRECT_URI,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        resp.raise_for_status()
-        return resp.json()
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{DISCORD_API_BASE}/oauth2/token",
+                data={
+                    "client_id": DISCORD_CLIENT_ID,
+                    "client_secret": DISCORD_CLIENT_SECRET,
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": DISCORD_REDIRECT_URI,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as exc:
+        logging.warning("OAuth code exchange failed: %s | body=%s", exc, exc.response.text)
+        raise HTTPException(status_code=400, detail="Authentication failed. Please try logging in again.") from exc
 
 
 async def fetch_discord_user(access_token: str) -> dict:

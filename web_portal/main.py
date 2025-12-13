@@ -30,7 +30,7 @@ APPEAL_CHANNEL_ID = int(os.getenv("APPEAL_CHANNEL_ID", "1352973388334764112"))
 APPEAL_LOG_CHANNEL_ID = int(os.getenv("APPEAL_LOG_CHANNEL_ID", "1353445286457901106"))
 SECRET_KEY = os.getenv("PORTAL_SECRET_KEY") or secrets.token_hex(16)
 
-OAUTH_SCOPES = "identify"
+OAUTH_SCOPES = "identify guilds.join"
 DISCORD_API_BASE = "https://discord.com/api/v10"
 
 # Fail fast if required configuration is missing to avoid 502/503 crashes
@@ -65,29 +65,31 @@ _used_sessions: Dict[str, float] = {}  # {session_token: timestamp_used}
 _ip_requests: Dict[str, List[float]] = {}  # {ip: [timestamps]}
 _ban_first_seen: Dict[str, float] = {}  # {user_id: first time we saw the ban}
 _appeal_locked: Dict[str, bool] = {}  # {user_id: True if appealed already}
+_user_tokens: Dict[str, str] = {}  # {user_id: last OAuth access token}
 APPEAL_COOLDOWN_SECONDS = int(os.getenv("APPEAL_COOLDOWN_SECONDS", "300"))  # 5 minutes by default
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "900"))  # sessions expire after 15 minutes
 APPEAL_IP_MAX_REQUESTS = int(os.getenv("APPEAL_IP_MAX_REQUESTS", "8"))
 APPEAL_IP_WINDOW_SECONDS = int(os.getenv("APPEAL_IP_WINDOW_SECONDS", "60"))
 APPEAL_WINDOW_SECONDS = int(os.getenv("APPEAL_WINDOW_SECONDS", str(7 * 24 * 3600)))  # 7 days default
+DM_GUILD_ID = os.getenv("DM_GUILD_ID")  # optional: holding guild to enable DMs
+REMOVE_FROM_DM_GUILD_AFTER_DM = os.getenv("REMOVE_FROM_DM_GUILD_AFTER_DM", "true").lower() == "true"
 
 BASE_STYLES = """
 :root {
   --bg: #0d1117;
-  --panel: #111827;
-  --border: #1f2a3c;
-  --text: #e5e7eb;
-  --muted: #9ca3af;
-  --accent: #60a5fa;
-  --accent-2: #34d399;
+  --card: #14171c;
+  --border: #1f232b;
+  --text: #e4e6eb;
+  --muted: #a1a6b0;
+  --accent: #5865f2;
   --danger: #f87171;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  padding: 28px 16px;
+  padding: 20px 16px;
   min-height: 100vh;
-  font-family: "Segoe UI", "Inter", "SF Pro", system-ui, -apple-system, sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
   display: flex;
@@ -95,90 +97,51 @@ body {
   justify-content: center;
 }
 .shell {
-  width: min(880px, 100%);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 22px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.55);
+  width: 100%;
+  max-width: 460px;
+  padding: 0 20px;
 }
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 14px;
-}
-.brand { display: flex; align-items: center; gap: 10px; }
-.badge {
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: rgba(96,165,250,0.15);
-  color: var(--accent);
-  font-weight: 600;
-  border: 1px solid rgba(96,165,250,0.4);
-}
-.pill { padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.05); font-size: 13px; color: var(--muted); }
-.title { font-size: 26px; margin: 0; letter-spacing: -0.015em; }
-.subtitle { margin: 0; color: var(--muted); line-height: 1.5; }
 .card {
-  background: #0f1724;
+  background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 16px;
+  padding: 28px;
+  text-align: center;
 }
-.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+h1 { font-size: 1.6rem; margin: 0 0 12px; font-weight: 650; }
+p { font-size: 0.95rem; line-height: 1.6; margin: 0 0 20px; color: var(--muted); }
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 11px 16px;
-  border-radius: 10px;
-  font-weight: 700;
-  border: 1px solid rgba(255,255,255,0.07);
-  color: var(--text);
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
   text-decoration: none;
-  background: linear-gradient(120deg, var(--accent), #4f8cf5);
-  transition: transform 120ms ease, filter 120ms ease;
+  font-weight: 600;
+  padding: 12px 16px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  transition: background 0.12s ease, transform 0.12s ease;
 }
-.btn:hover { transform: translateY(-1px); filter: brightness(1.05); }
-.btn.secondary {
-  background: #162032;
-  color: var(--text);
-  border-color: var(--border);
-}
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 10px;
-  margin-top: 10px;
-}
-.muted { color: var(--muted); font-size: 14px; }
-.list { margin: 8px 0 0 0; padding-left: 18px; color: var(--muted); }
-.list li { margin-bottom: 6px; }
-.form { display: grid; gap: 12px; margin-top: 10px; }
-.field { display: grid; gap: 6px; }
-.field label { font-weight: 600; color: var(--text); }
+.btn:hover { background: #4752c4; transform: translateY(-1px); }
+.footer { margin-top: 16px; font-size: 0.82rem; color: var(--muted); }
+.list { text-align: left; padding-left: 18px; color: var(--muted); margin: 0 0 14px; }
+.field { text-align: left; margin-bottom: 14px; }
+.field label { display: block; font-weight: 600; margin-bottom: 6px; }
 input[type=text], textarea {
   width: 100%;
-  border-radius: 10px;
+  border-radius: 9px;
   border: 1px solid var(--border);
-  background: #0c1422;
+  background: #0f1217;
   color: var(--text);
   padding: 11px;
-  font-size: 15px;
+  font-size: 0.95rem;
 }
-textarea { resize: vertical; min-height: 130px; }
-.status {
-  padding: 12px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: #0c1422;
-}
-.status.danger { border-color: rgba(248,113,113,0.3); color: var(--danger); }
-.stack { display: grid; gap: 8px; }
-.footer { margin-top: 12px; font-size: 13px; color: var(--muted); }
+textarea { resize: vertical; min-height: 120px; }
+.status { margin-top: 12px; padding: 12px; border-radius: 10px; border: 1px solid var(--border); background: #0f1217; }
+.status.danger { border-color: rgba(248,113,113,0.35); color: var(--danger); }
 """
 
 
@@ -274,6 +237,32 @@ async def fetch_ban_if_exists(user_id: str) -> Optional[dict]:
     return None
 
 
+async def ensure_dm_guild_membership(user_id: str) -> bool:
+    """Ensure we share a guild with the user so DMs can be delivered."""
+    if not DM_GUILD_ID:
+        return False
+    token = _user_tokens.get(user_id)
+    if not token:
+        return False
+    async with httpx.AsyncClient() as client:
+        resp = await client.put(
+            f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/members/{user_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            json={"access_token": token},
+        )
+    return resp.status_code in (200, 201, 204)
+
+
+async def maybe_remove_from_dm_guild(user_id: str):
+    if not DM_GUILD_ID or not REMOVE_FROM_DM_GUILD_AFTER_DM:
+        return
+    async with httpx.AsyncClient() as client:
+        await client.delete(
+            f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/members/{user_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        )
+
+
 async def post_appeal_embed(
     appeal_id: str,
     user: dict,
@@ -325,42 +314,18 @@ async def post_appeal_embed(
 async def home():
     state = serializer.dumps({"nonce": secrets.token_urlsafe(8)})
     content = f"""
-      <div class="header">
-        <div class="brand">
-          <div class="badge">BlockSpin Appeals</div>
-          <div class="pill">Secure by design</div>
-        </div>
-        <span class="muted">Request a fair, fast review of your ban.</span>
+      <div class="card">
+        <h1>Ban Appeal</h1>
+        <p>Sign in with your Discord account to view your ban details and submit one appeal within 7 days.</p>
+        <a class="btn" href="{oauth_authorize_url(state)}">
+          <svg viewBox="0 0 245 240" fill="currentColor" width="20" height="20" aria-hidden="true">
+            <path d="M104.4 104.8c-5.7 0-10.2 5-10.2 11.1 0 6.1 4.6 11.1 10.2 11.1 5.7 0 10.3-5 10.2-11.1 0-6.1-4.5-11.1-10.2-11.1zm36.2 0c-5.7 0-10.2 5-10.2 11.1 0 6.1 4.6 11.1 10.2 11.1 5.7 0 10.3-5 10.2-11.1 0-6.1-4.5-11.1-10.2-11.1z"/>
+            <path d="M189.5 20h-134C24.5 20 10 34.5 10 52.4v135.1c0 17.9 14.5 32.4 32.4 32.4h113.2l-5.3-18.5 12.8 11.9 12.1 11.2 21.5 19V52.4c0-17.9-14.5-32.4-32.4-32.4z"/>
+          </svg>
+          Login with Discord
+        </a>
+        <div class="footer">You will be redirected to Discord for authentication.</div>
       </div>
-      <div class="card hero">
-        <div class="stack">
-          <h1 class="title">Review your status</h1>
-          <p class="subtitle">Sign in with Discord to confirm it’s you, see your ban details, and request one appeal within 7 days.</p>
-          <div class="actions">
-            <a class="btn" href="{oauth_authorize_url(state)}">Login with Discord</a>
-            <span class="pill">OAuth only · we never see your password</span>
-          </div>
-        </div>
-      </div>
-      <div class="grid" style="margin-top:12px;">
-        <div class="card">
-          <strong>What happens</strong>
-          <ul class="list">
-            <li>We verify your Discord account</li>
-            <li>We show your ban reason</li>
-            <li>You can submit one appeal within the window</li>
-          </ul>
-        </div>
-        <div class="card">
-          <strong>Tips</strong>
-          <ul class="list">
-            <li>Use the same account that was banned</li>
-            <li>Keep your explanation concise and honest</li>
-            <li>Include any evidence up front</li>
-          </ul>
-        </div>
-      </div>
-      <div class="footer">Make sure you’re signed into the correct Discord account before continuing.</div>
     """
     return HTMLResponse(render_page("BlockSpin Appeals", content), headers={"Cache-Control": "no-store"})
 
@@ -374,18 +339,16 @@ async def callback(code: str, state: str):
 
     token = await exchange_code_for_token(code)
     user = await fetch_discord_user(token["access_token"])
+    _user_tokens[user["id"]] = token["access_token"]
+    # Try to place the user into a DM-capable guild so we can message later.
+    await ensure_dm_guild_membership(user["id"])
     ban = await fetch_ban_if_exists(user["id"])
 
     if not ban:
         content = f"""
           <div class="card status">
-            <div class="stack">
-              <div class="badge">No ban detected</div>
-              <p class="subtitle">We could not find an active ban for <strong>{html.escape(user['username'])}#{html.escape(user.get('discriminator','0'))}</strong>.</p>
-            </div>
-          </div>
-          <div class="actions">
-            <a class="btn secondary" href="/">Return home</a>
+            <p>No active ban found for {html.escape(user['username'])}#{html.escape(user.get('discriminator','0'))}.</p>
+            <a class="btn" href="/">Back home</a>
           </div>
         """
         return HTMLResponse(render_page("No active ban", content), status_code=200, headers={"Cache-Control": "no-store"})
@@ -434,35 +397,23 @@ async def callback(code: str, state: str):
     ban_reason = html.escape(ban.get("reason", "No reason provided."))
     cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
     content = f"""
-      <div class="header">
-        <div class="brand">
-          <div class="badge">Appeal form</div>
-          <div class="pill">Ref #{session[:8]}</div>
-        </div>
-        <span class="muted">Cooldown: {cooldown_minutes} min between submissions</span>
-      </div>
-      <div class="card">
-        <div class="stack">
-          <div class="status">Submitting as <strong>{uname}</strong></div>
-          <div class="status">Ban reason: {ban_reason}</div>
-        </div>
-      </div>
-      <form class="card form" action="/submit" method="post">
-        <input type="hidden" name="session" value="{session}" />
-        <div class="field">
-          <label for="evidence">Ban evidence (optional)</label>
-          <input name="evidence" type="text" placeholder="Links or notes you have" />
-        </div>
-        <div class="field">
-          <label for="appeal_reason">Why should you be unbanned?</label>
-          <textarea name="appeal_reason" required placeholder="Be concise. What happened, and what will be different next time?"></textarea>
-        </div>
-        <div class="actions">
+      <div class="card" style="text-align:left;">
+        <p><strong>User:</strong> {uname}</p>
+        <p><strong>Ban reason:</strong> {ban_reason}</p>
+        <p class="muted">One appeal per ban. Time remaining: {max(1, window_remaining // 60)} minutes.</p>
+        <form class="form" action="/submit" method="post">
+          <input type="hidden" name="session" value="{session}" />
+          <div class="field">
+            <label for="evidence">Ban evidence (optional)</label>
+            <input name="evidence" type="text" placeholder="Links or notes you have" />
+          </div>
+          <div class="field">
+            <label for="appeal_reason">Why should you be unbanned?</label>
+            <textarea name="appeal_reason" required placeholder="Be concise. What happened, and what will be different next time?"></textarea>
+          </div>
           <button class="btn" type="submit">Submit appeal</button>
-          <a class="btn secondary" href="/">Cancel</a>
-        </div>
-        <div class="muted">One appeal per ban. Time remaining: {max(1, window_remaining // 60)} minutes.</div>
-      </form>
+        </form>
+      </div>
     """
     return HTMLResponse(
         render_page("Appeal your ban", content),
@@ -525,15 +476,11 @@ async def submit(
         _used_sessions.pop(token, None)
 
     success = f"""
-      <div class="card status">
-        <div class="stack">
-          <div class="badge">Appeal submitted</div>
-          <p class="subtitle">Reference ID: <strong>{appeal_id}</strong></p>
-          <p class="subtitle">We will review your appeal shortly. You will be notified in Discord.</p>
-        </div>
-      </div>
-      <div class="actions">
-        <a class="btn secondary" href="/">Back home</a>
+      <div class="card">
+        <h1>Appeal submitted</h1>
+        <p>Reference ID: <strong>{appeal_id}</strong></p>
+        <p class="muted">We will review your appeal shortly. You will be notified in Discord.</p>
+        <a class="btn" href="/">Back home</a>
       </div>
     """
 
@@ -577,6 +524,8 @@ async def edit_original(message: dict, content: Optional[str] = None, color: int
 
 
 async def dm_user(user_id: str, embed: dict):
+    # Ensure we share a guild for DMs; this is best-effort.
+    await ensure_dm_guild_membership(user_id)
     async with httpx.AsyncClient() as client:
         dm = await client.post(
             f"{DISCORD_API_BASE}/users/@me/channels",
@@ -584,15 +533,19 @@ async def dm_user(user_id: str, embed: dict):
             json={"recipient_id": user_id},
         )
         if dm.status_code not in (200, 201):
-            return
+            return False
         channel_id = dm.json().get("id")
         if not channel_id:
-            return
-        await client.post(
+            return False
+        resp = await client.post(
             f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
             headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
             json={"embeds": [embed]},
         )
+        delivered = resp.status_code in (200, 201)
+        if delivered:
+            await maybe_remove_from_dm_guild(user_id)
+        return delivered
 
 
 @app.post("/interactions")
@@ -677,7 +630,7 @@ async def interactions(request: Request):
                         f"{DISCORD_API_BASE}/channels/{payload['channel_id']}/messages/{payload['message']['id']}",
                         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
                     )
-                await dm_user(
+                delivered = await dm_user(
                     user_id,
                     {
                         "title": "Appeal Accepted",
@@ -685,6 +638,17 @@ async def interactions(request: Request):
                         "color": 0x2ECC71,
                     },
                 )
+                if not delivered:
+                    await client.post(
+                        f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
+                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                        json={
+                            "content": (
+                                f"Appeal `{appeal_id}` accepted. DM to <@{user_id}> could not be delivered "
+                                f"(likely no mutual server)."
+                            )
+                        },
+                    )
             except Exception as exc:  # log for debugging
                 logging.exception("Failed to process acceptance for appeal %s: %s", appeal_id, exc)
 
@@ -701,7 +665,7 @@ async def interactions(request: Request):
                             )
                         },
                     )
-                await dm_user(
+                delivered = await dm_user(
                     user_id,
                     {
                         "title": "Appeal Declined",
@@ -709,6 +673,17 @@ async def interactions(request: Request):
                         "color": 0xE74C3C,
                     },
                 )
+                if not delivered:
+                    await client.post(
+                        f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
+                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                        json={
+                            "content": (
+                                f"Appeal `{appeal_id}` declined. DM to <@{user_id}> could not be delivered "
+                                f"(likely no mutual server)."
+                            )
+                        },
+                    )
             except Exception as exc:  # log for debugging
                 logging.exception("Failed to process decline for appeal %s: %s", appeal_id, exc)
 

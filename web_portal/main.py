@@ -575,38 +575,6 @@ async def interactions(request: Request):
         if not appeal_id or not user_id or action not in {"web_appeal_accept", "web_appeal_decline"}:
             return await respond_ephemeral("Invalid interaction data.")
 
-        def ack_message(label: str) -> JSONResponse:
-            # Acknowledge and disable buttons to avoid double-processing.
-            return JSONResponse(
-                {
-                    "type": 7,  # UPDATE_MESSAGE
-                    "data": {
-                        "content": f"{label}…",
-                        "components": [
-                            {
-                                "type": 1,
-                                "components": [
-                                    {
-                                        "type": 2,
-                                        "style": 3,
-                                        "label": "Accept",
-                                        "custom_id": f"web_appeal_accept:{appeal_id}:{user_id}",
-                                        "disabled": True,
-                                    },
-                                    {
-                                        "type": 2,
-                                        "style": 4,
-                                        "label": "Decline",
-                                        "custom_id": f"web_appeal_decline:{appeal_id}:{user_id}",
-                                        "disabled": True,
-                                    },
-                                ],
-                            }
-                        ],
-                    },
-                }
-            )
-
         # Run the heavy work in background to avoid interaction timeouts.
         async def handle_accept():
             try:
@@ -689,11 +657,11 @@ async def interactions(request: Request):
 
         if action == "web_appeal_accept":
             asyncio.create_task(handle_accept())
-            return ack_message("Processing acceptance")
+            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE keeps buttons but avoids timeouts
 
         if action == "web_appeal_decline":
             asyncio.create_task(handle_decline())
-            return ack_message("Processing decline")
+            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE keeps buttons but avoids timeouts
 
     return JSONResponse({"type": 4, "data": {"content": "Unsupported interaction", "flags": 1 << 6}})
 

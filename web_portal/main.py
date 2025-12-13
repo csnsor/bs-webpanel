@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from itsdangerous import URLSafeSerializer, BadSignature
 from dotenv import load_dotenv
+import logging
 
 # Load .env if present (Railway still uses real env vars)
 load_dotenv()
@@ -56,6 +57,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+logging.basicConfig(level=logging.INFO)
 serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 # simple in-memory stores
 _appeal_rate_limit: Dict[str, float] = {}  # {user_id: timestamp_of_last_submit}
@@ -357,14 +359,14 @@ async def home():
           <div class="badge">BlockSpin Appeals</div>
           <div class="pill">Secure by design</div>
         </div>
-        <span class="muted">Fast review pipeline for moderators</span>
+        <span class="muted">A clear path to request a second chance.</span>
       </div>
       <div class="card hero">
         <div class="stack">
-          <h1 class="title">Appeal your server ban</h1>
+          <h1 class="title">Request a review of your ban</h1>
           <p class="subtitle">
-            Authenticate with Discord so we know it is you. Your appeal is sent straight to the BlockSpin
-            moderation team with anti-spam protection and a unique reference.
+            Sign in with Discord so we know it’s really you. We’ll collect the details needed for the BlockSpin
+            moderation team to review your case quickly.
           </p>
           <div class="actions">
             <a class="btn" href="{oauth_authorize_url(state)}">Continue with Discord</a>
@@ -382,15 +384,15 @@ async def home():
           </ul>
         </div>
         <div class="card">
-          <strong>Quality-of-life</strong>
+          <strong>What to expect</strong>
           <ul class="list">
-            <li>Auto-populated user info</li>
-            <li>Clean, mobile-friendly layout</li>
-            <li>Instant reference ID after submission</li>
+            <li>We’ll confirm your Discord identity</li>
+            <li>We ask for evidence and what changed</li>
+            <li>You get a reference ID after submitting</li>
           </ul>
         </div>
       </div>
-      <div class="footer">Having trouble? Confirm you are logged into the correct Discord account before continuing.</div>
+      <div class="footer">Tip: Make sure you’re signed into the correct Discord account before you continue.</div>
     """
     return HTMLResponse(render_page("BlockSpin Appeals", content), headers={"Cache-Control": "no-store"})
 
@@ -453,7 +455,7 @@ async def callback(code: str, state: str):
         </div>
         <div class="field">
           <label for="appeal_reason">Why should you be unbanned?</label>
-          <textarea name="appeal_reason" required placeholder="Explain what happened and what has changed."></textarea>
+          <textarea name="appeal_reason" required placeholder="Be concise. What happened, and what will be different next time?"></textarea>
         </div>
         <div class="actions">
           <button class="btn" type="submit">Submit appeal</button>
@@ -617,63 +619,85 @@ async def interactions(request: Request):
 
         # Run the heavy work in background to avoid interaction timeouts.
         async def handle_accept():
-            async with httpx.AsyncClient() as client:
-                await client.delete(
-                    f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/bans/{user_id}",
-                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                )
-                await client.post(
-                    f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
-                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                    json={
-                        "content": (
-                            f"Appeal `{appeal_id}` accepted by <@{member.get('user', {}).get('id')}>. "
-                            f"User <@{user_id}> unbanned."
-                        )
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.delete(
+                        f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/bans/{user_id}",
+                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                    )
+                    await client.post(
+                        f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
+                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                        json={
+                            "content": (
+                                f"Appeal `{appeal_id}` accepted by <@{member.get('user', {}).get('id')}>. "
+                                f"User <@{user_id}> unbanned."
+                            )
+                        },
+                    )
+                    # Delete the original appeal message
+                    await client.delete(
+                        f"{DISCORD_API_BASE}/channels/{payload['channel_id']}/messages/{payload['message']['id']}",
+                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                    )
+                await dm_user(
+                    user_id,
+                    {
+                        "title": "Appeal Accepted",
+                        "description": "Your appeal was accepted. You have been unbanned.",
+                        "color": 0x2ECC71,
                     },
                 )
-                # Delete the original appeal message
-                await client.delete(
-                    f"{DISCORD_API_BASE}/channels/{payload['channel_id']}/messages/{payload['message']['id']}",
-                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                )
-            await dm_user(
-                user_id,
-                {
-                    "title": "Appeal Accepted",
-                    "description": "Your appeal was accepted. You have been unbanned.",
-                    "color": 0x2ECC71,
-                },
-            )
+            except Exception as exc:  # log for debugging
+                logging.exception("Failed to process acceptance for appeal %s: %s", appeal_id, exc)
 
         async def handle_decline():
-            async with httpx.AsyncClient() as client:
-                await client.post(
-                    f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
-                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                    json={
-                        "content": (
-                            f"Appeal `{appeal_id}` declined by <@{member.get('user', {}).get('id')}>. "
-                            f"User <@{user_id}> notified."
-                        )
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
+                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                        json={
+                            "content": (
+                                f"Appeal `{appeal_id}` declined by <@{member.get('user', {}).get('id')}>. "
+                                f"User <@{user_id}> notified."
+                            )
+                        },
+                    )
+                await dm_user(
+                    user_id,
+                    {
+                        "title": "Appeal Declined",
+                        "description": "Your appeal was declined.",
+                        "color": 0xE74C3C,
                     },
                 )
-            await dm_user(
-                user_id,
-                {
-                    "title": "Appeal Declined",
-                    "description": "Your appeal was declined.",
-                    "color": 0xE74C3C,
-                },
-            )
+            except Exception as exc:  # log for debugging
+                logging.exception("Failed to process decline for appeal %s: %s", appeal_id, exc)
 
         if action == "web_appeal_accept":
             asyncio.create_task(handle_accept())
-            return await respond_ephemeral("Processing appeal acceptance...")
+            return JSONResponse(
+                {
+                    "type": 7,  # UPDATE_MESSAGE
+                    "data": {
+                        "content": "Appeal is being processed (accept).",
+                        "components": [],
+                    },
+                }
+            )
 
         if action == "web_appeal_decline":
             asyncio.create_task(handle_decline())
-            return await respond_ephemeral("Processing appeal decline...")
+            return JSONResponse(
+                {
+                    "type": 7,  # UPDATE_MESSAGE
+                    "data": {
+                        "content": "Appeal is being processed (decline).",
+                        "components": [],
+                    },
+                }
+            )
 
     return JSONResponse({"type": 4, "data": {"content": "Unsupported interaction", "flags": 1 << 6}})
 

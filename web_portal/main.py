@@ -4,6 +4,7 @@ import uuid
 import asyncio
 import time
 import html
+import copy
 from typing import Optional, Tuple, Dict, List
 
 import httpx
@@ -79,20 +80,21 @@ REMOVE_FROM_DM_GUILD_AFTER_DM = os.getenv("REMOVE_FROM_DM_GUILD_AFTER_DM", "true
 
 BASE_STYLES = """
 :root {
-  --bg: #0d1117;
-  --card: #14171c;
-  --border: #1f232b;
-  --text: #e4e6eb;
-  --muted: #a1a6b0;
-  --accent: #5865f2;
-  --danger: #f87171;
+  --bg: #0b0f15;
+  --card: #101621;
+  --border: #1b2432;
+  --text: #e6eaf2;
+  --muted: #9aa3b5;
+  --accent: #5b7bff;
+  --accent-2: #4ad6a7;
+  --danger: #f87272;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  padding: 20px 16px;
+  padding: 24px 16px;
   min-height: 100vh;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
   background: var(--bg);
   color: var(--text);
   display: flex;
@@ -101,41 +103,42 @@ body {
 }
 .shell {
   width: 100%;
-  max-width: 460px;
+  max-width: 520px;
   padding: 0 20px;
 }
 .card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 28px;
+  padding: 26px;
   text-align: center;
+  box-shadow: 0 24px 60px rgba(0,0,0,0.35);
 }
-h1 { font-size: 1.6rem; margin: 0 0 12px; font-weight: 650; }
-p { font-size: 0.95rem; line-height: 1.6; margin: 0 0 20px; color: var(--muted); }
+h1 { font-size: 1.7rem; margin: 0 0 12px; font-weight: 700; letter-spacing: -0.01em; }
+p { font-size: 0.97rem; line-height: 1.6; margin: 0 0 18px; color: var(--muted); }
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
   width: 100%;
-  background: var(--accent);
+  background: linear-gradient(120deg, var(--accent), #4b66e6);
   color: #fff;
   text-decoration: none;
   font-weight: 600;
   padding: 12px 16px;
-  border-radius: 9px;
+  border-radius: 10px;
   border: 1px solid transparent;
   transition: background 0.12s ease, transform 0.12s ease;
 }
-.btn:hover { background: #4752c4; transform: translateY(-1px); }
+.btn:hover { background: #4357c9; transform: translateY(-1px); }
 .footer { margin-top: 16px; font-size: 0.82rem; color: var(--muted); }
 .list { text-align: left; padding-left: 18px; color: var(--muted); margin: 0 0 14px; }
 .field { text-align: left; margin-bottom: 14px; }
 .field label { display: block; font-weight: 600; margin-bottom: 6px; }
 input[type=text], textarea {
   width: 100%;
-  border-radius: 9px;
+  border-radius: 10px;
   border: 1px solid var(--border);
   background: #0f1217;
   color: var(--text);
@@ -605,7 +608,7 @@ async def update_appeal_message(channel_id: str, message_id: str, old_embed: dic
     """
     Edits the original appeal message to remove buttons and update status.
     """
-    new_embed = old_embed.copy()
+    new_embed = copy.deepcopy(old_embed or {})
 
     if status == "accepted":
         color = 0x2ECC71  # Green
@@ -667,7 +670,8 @@ async def interactions(request: Request):
         # Extract message details for editing later
         channel_id = payload["channel_id"]
         message_id = payload["message"]["id"]
-        original_embed = payload["message"]["embeds"][0]
+        embeds = payload["message"].get("embeds") or []
+        original_embed = copy.deepcopy(embeds[0]) if embeds else {}
 
         # Basic replay/spam guard: ignore if custom_id format looks wrong or missing ids
         if not appeal_id or not user_id or action not in {"web_appeal_accept", "web_appeal_decline"}:

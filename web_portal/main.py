@@ -3,7 +3,8 @@ import secrets
 import uuid
 import asyncio
 import time
-from typing import Optional, Tuple, Dict
+import html
+from typing import Optional, Tuple, Dict, List
 
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -20,7 +21,7 @@ load_dotenv()
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
 DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")  # e.g. https://bs-appeals.up.railway.app/callback
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_TOKEN")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_PUBLIC_KEY = os.getenv("DISCORD_PUBLIC_KEY")  # Required for interaction verification
 TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "0")
 MODERATOR_ROLE_ID = int(os.getenv("MODERATOR_ROLE_ID", "1353068159346671707"))
@@ -56,12 +57,178 @@ app.add_middleware(
     allow_headers=["*"],
 )
 serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
-# simple in-memory rate limit store: {user_id: timestamp_of_last_submit}
-_appeal_rate_limit: Dict[str, float] = {}
+# simple in-memory stores
+_appeal_rate_limit: Dict[str, float] = {}  # {user_id: timestamp_of_last_submit}
+_used_sessions: Dict[str, float] = {}  # {session_token: timestamp_used}
+_ip_requests: Dict[str, List[float]] = {}  # {ip: [timestamps]}
 APPEAL_COOLDOWN_SECONDS = int(os.getenv("APPEAL_COOLDOWN_SECONDS", "300"))  # 5 minutes by default
+SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "900"))  # sessions expire after 15 minutes
+APPEAL_IP_MAX_REQUESTS = int(os.getenv("APPEAL_IP_MAX_REQUESTS", "8"))
+APPEAL_IP_WINDOW_SECONDS = int(os.getenv("APPEAL_IP_WINDOW_SECONDS", "60"))
+
+BASE_STYLES = """
+:root {
+  --bg: #0b1021;
+  --card: #121a35;
+  --accent: #6cd4ff;
+  --accent-2: #4bd1a0;
+  --text: #e8edff;
+  --muted: #9fb0d9;
+  --danger: #ff6b6b;
+  --shadow: 0 20px 60px rgba(0,0,0,0.45);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  font-family: "Segoe UI", "SF Pro Display", system-ui, -apple-system, sans-serif;
+  background: radial-gradient(circle at 20% 20%, rgba(108,212,255,0.12), transparent 25%),
+              radial-gradient(circle at 80% 0%, rgba(75,209,160,0.10), transparent 22%),
+              var(--bg);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+}
+.shell {
+  width: min(960px, 95vw);
+  background: linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 18px;
+  padding: 28px;
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(10px);
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.badge {
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(108,212,255,0.12);
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid rgba(108,212,255,0.3);
+}
+.hero {
+  display: grid;
+  gap: 14px;
+}
+.title {
+  font-size: 28px;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+.subtitle {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.card {
+  background: var(--card);
+  border-radius: 14px;
+  padding: 18px;
+  border: 1px solid rgba(255,255,255,0.04);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  font-weight: 700;
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--text);
+  text-decoration: none;
+  background: linear-gradient(120deg, var(--accent), #5bb6ff);
+  box-shadow: 0 10px 30px rgba(108,212,255,0.35);
+  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+}
+.btn:hover { transform: translateY(-1px); filter: brightness(1.05); }
+.btn.secondary {
+  background: linear-gradient(120deg, var(--card), rgba(255,255,255,0.04));
+  box-shadow: none;
+  color: var(--text);
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+.muted { color: var(--muted); font-size: 14px; }
+.list { margin: 0; padding-left: 18px; color: var(--muted); }
+.list li { margin-bottom: 6px; }
+.form {
+  display: grid;
+  gap: 12px;
+}
+.field {
+  display: grid;
+  gap: 6px;
+}
+.field label { font-weight: 600; color: var(--text); }
+input[type=text], textarea {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  padding: 12px;
+  font-size: 15px;
+}
+textarea { resize: vertical; min-height: 140px; }
+.status {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(108,212,255,0.08);
+  color: var(--text);
+}
+.status.danger { background: rgba(255,107,107,0.12); color: #ffc0c0; }
+.pill { padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.05); font-size: 13px; }
+.stack { display: grid; gap: 10px; }
+.footer { margin-top: 10px; font-size: 13px; color: var(--muted); }
+"""
 
 
 # --- Helpers ---
+def render_page(title: str, body_html: str) -> str:
+    return f"""
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>{html.escape(title)}</title>
+        <style>{BASE_STYLES}</style>
+      </head>
+      <body>
+        <div class="shell">
+          {body_html}
+        </div>
+      </body>
+    </html>
+    """
+
+
 def oauth_authorize_url(state: str) -> str:
     return (
         f"{DISCORD_API_BASE}/oauth2/authorize"
@@ -71,6 +238,26 @@ def oauth_authorize_url(state: str) -> str:
         f"&state={state}"
         f"&prompt=none"
     )
+
+
+def get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host or "unknown"
+    return "unknown"
+
+
+def enforce_ip_rate_limit(ip: str):
+    now = time.time()
+    window_start = now - APPEAL_IP_WINDOW_SECONDS
+    bucket = _ip_requests.setdefault(ip, [])
+    bucket = [t for t in bucket if t >= window_start]
+    if len(bucket) >= APPEAL_IP_MAX_REQUESTS:
+        raise HTTPException(status_code=429, detail="Too many requests. Please slow down and try again.")
+    bucket.append(now)
+    _ip_requests[ip] = bucket
 
 
 async def exchange_code_for_token(code: str) -> dict:
@@ -164,17 +351,48 @@ async def post_appeal_embed(
 @app.get("/", response_class=HTMLResponse)
 async def home():
     state = serializer.dumps({"nonce": secrets.token_urlsafe(8)})
-    return HTMLResponse(
-        f"""
-        <html><body style="font-family: Arial, sans-serif; max-width: 640px; margin: 2rem auto;">
-        <h1>BlockSpin Appeals</h1>
-        <p>Connect your Discord account to appeal a server ban.</p>
-        <a href="{oauth_authorize_url(state)}">
-            <button style="padding: 12px 18px; font-size: 16px;">Login with Discord</button>
-        </a>
-        </body></html>
-        """
-    )
+    content = f"""
+      <div class="header">
+        <div class="brand">
+          <div class="badge">BlockSpin Appeals</div>
+          <div class="pill">Secure by design</div>
+        </div>
+        <span class="muted">Fast review pipeline for moderators</span>
+      </div>
+      <div class="card hero">
+        <div class="stack">
+          <h1 class="title">Appeal your server ban</h1>
+          <p class="subtitle">
+            Authenticate with Discord so we know it is you. Your appeal is sent straight to the BlockSpin
+            moderation team with anti-spam protection and a unique reference.
+          </p>
+          <div class="actions">
+            <a class="btn" href="{oauth_authorize_url(state)}">Continue with Discord</a>
+            <span class="pill">No password stored · OAuth only</span>
+          </div>
+        </div>
+      </div>
+      <div class="grid" style="margin-top:12px;">
+        <div class="card">
+          <strong>Safety</strong>
+          <ul class="list">
+            <li>Signed sessions, single-use forms</li>
+            <li>Cooldown + IP throttling to block spam</li>
+            <li>Discord interaction signatures verified</li>
+          </ul>
+        </div>
+        <div class="card">
+          <strong>Quality-of-life</strong>
+          <ul class="list">
+            <li>Auto-populated user info</li>
+            <li>Clean, mobile-friendly layout</li>
+            <li>Instant reference ID after submission</li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer">Having trouble? Confirm you are logged into the correct Discord account before continuing.</div>
+    """
+    return HTMLResponse(render_page("BlockSpin Appeals", content), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/callback")
@@ -189,40 +407,71 @@ async def callback(code: str, state: str):
     ban = await fetch_ban_if_exists(user["id"])
 
     if not ban:
-        return HTMLResponse(
-            f"<h2>No active ban for {user['username']}#{user.get('discriminator','0')}</h2>",
-            status_code=200,
-        )
+        content = f"""
+          <div class="card status">
+            <div class="stack">
+              <div class="badge">No ban detected</div>
+              <p class="subtitle">We could not find an active ban for <strong>{html.escape(user['username'])}#{html.escape(user.get('discriminator','0'))}</strong>.</p>
+            </div>
+          </div>
+          <div class="actions">
+            <a class="btn secondary" href="/">Return home</a>
+          </div>
+        """
+        return HTMLResponse(render_page("No active ban", content), status_code=200, headers={"Cache-Control": "no-store"})
 
     session = serializer.dumps(
         {
             "uid": user["id"],
             "uname": f"{user['username']}#{user.get('discriminator','0')}",
             "ban_reason": ban.get("reason", "No reason provided."),
+            "iat": time.time(),
         }
     )
+    uname = html.escape(f"{user['username']}#{user.get('discriminator','0')}")
+    ban_reason = html.escape(ban.get("reason", "No reason provided."))
+    cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
+    content = f"""
+      <div class="header">
+        <div class="brand">
+          <div class="badge">Appeal form</div>
+          <div class="pill">Ref #{session[:8]}</div>
+        </div>
+        <span class="muted">Cooldown: {cooldown_minutes} min between submissions</span>
+      </div>
+      <div class="card">
+        <div class="stack">
+          <div class="status">Submitting as <strong>{uname}</strong></div>
+          <div class="status">Ban reason: {ban_reason}</div>
+        </div>
+      </div>
+      <form class="card form" action="/submit" method="post">
+        <input type="hidden" name="session" value="{session}" />
+        <div class="field">
+          <label for="evidence">Ban evidence (optional)</label>
+          <input name="evidence" type="text" placeholder="Links or notes you have" />
+        </div>
+        <div class="field">
+          <label for="appeal_reason">Why should you be unbanned?</label>
+          <textarea name="appeal_reason" required placeholder="Explain what happened and what has changed."></textarea>
+        </div>
+        <div class="actions">
+          <button class="btn" type="submit">Submit appeal</button>
+          <a class="btn secondary" href="/">Cancel</a>
+        </div>
+        <div class="muted">Your submission is single-use and expires after {SESSION_TTL_SECONDS // 60} minutes.</div>
+      </form>
+    """
     return HTMLResponse(
-        f"""
-        <html><body style="font-family: Arial, sans-serif; max-width: 680px; margin: 2rem auto;">
-        <h2>Appeal your ban</h2>
-        <p><strong>User:</strong> {user['username']}#{user.get('discriminator','0')}</p>
-        <p><strong>Ban reason:</strong> {ban.get('reason', 'No reason provided.')}</p>
-        <form action="/submit" method="post">
-            <input type="hidden" name="session" value="{session}" />
-            <label for="evidence">Ban evidence (optional):</label><br/>
-            <input name="evidence" type="text" style="width:100%; padding:8px;" placeholder="Links or notes you have"/><br/><br/>
-            <label for="appeal_reason">Why should you be unbanned?</label><br/>
-            <textarea name="appeal_reason" rows="6" style="width:100%; padding:8px;" required></textarea><br/><br/>
-            <button type="submit" style="padding:12px 18px; font-size:16px;">Submit Appeal</button>
-        </form>
-        </body></html>
-        """,
+        render_page("Appeal your ban", content),
         status_code=200,
+        headers={"Cache-Control": "no-store"},
     )
 
 
 @app.post("/submit")
 async def submit(
+    request: Request,
     session: str = Form(...),
     evidence: str = Form("No evidence provided."),
     appeal_reason: str = Form(...),
@@ -232,8 +481,20 @@ async def submit(
     except BadSignature:
         raise HTTPException(status_code=400, detail="Invalid session")
 
-    # Rate limit to prevent spam
     now = time.time()
+
+    # Session expiry + single-use guard
+    issued_at = float(data.get("iat", 0))
+    if not issued_at or now - issued_at > SESSION_TTL_SECONDS:
+        raise HTTPException(status_code=400, detail="This form session expired. Please restart the appeal.")
+    if session in _used_sessions:
+        raise HTTPException(status_code=409, detail="This appeal was already submitted.")
+
+    # Per-IP throttle to slow basic spam
+    ip = get_client_ip(request)
+    enforce_ip_rate_limit(ip)
+
+    # Rate limit to prevent spam
     last = _appeal_rate_limit.get(data["uid"])
     if last and now - last < APPEAL_COOLDOWN_SECONDS:
         wait = int(APPEAL_COOLDOWN_SECONDS - (now - last))
@@ -250,9 +511,26 @@ async def submit(
         appeal_reason=appeal_reason,
     )
 
-    return HTMLResponse(
-        f"<h3>Appeal submitted!</h3><p>Reference: {appeal_id}</p>", status_code=200
-    )
+    _used_sessions[session] = now
+    # prune old used sessions
+    stale_sessions = [token for token, ts in _used_sessions.items() if now - ts > SESSION_TTL_SECONDS * 2]
+    for token in stale_sessions:
+        _used_sessions.pop(token, None)
+
+    success = f"""
+      <div class="card status">
+        <div class="stack">
+          <div class="badge">Appeal submitted</div>
+          <p class="subtitle">Reference ID: <strong>{appeal_id}</strong></p>
+          <p class="subtitle">We will review your appeal shortly. You will be notified in Discord.</p>
+        </div>
+      </div>
+      <div class="actions">
+        <a class="btn secondary" href="/">Back home</a>
+      </div>
+    """
+
+    return HTMLResponse(render_page("Appeal submitted", success), status_code=200, headers={"Cache-Control": "no-store"})
 
 
 # --- Discord interactions (button handling) ---

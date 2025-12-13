@@ -70,145 +70,112 @@ APPEAL_IP_WINDOW_SECONDS = int(os.getenv("APPEAL_IP_WINDOW_SECONDS", "60"))
 
 BASE_STYLES = """
 :root {
-  --bg: #0b1021;
-  --card: #121a35;
-  --accent: #6cd4ff;
-  --accent-2: #4bd1a0;
-  --text: #e8edff;
-  --muted: #9fb0d9;
-  --danger: #ff6b6b;
-  --shadow: 0 20px 60px rgba(0,0,0,0.45);
+  --bg: #0d1117;
+  --panel: #111827;
+  --border: #1f2a3c;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --accent: #60a5fa;
+  --accent-2: #34d399;
+  --danger: #f87171;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  padding: 0;
+  padding: 28px 16px;
   min-height: 100vh;
-  font-family: "Segoe UI", "SF Pro Display", system-ui, -apple-system, sans-serif;
-  background: radial-gradient(circle at 20% 20%, rgba(108,212,255,0.12), transparent 25%),
-              radial-gradient(circle at 80% 0%, rgba(75,209,160,0.10), transparent 22%),
-              var(--bg);
+  font-family: "Segoe UI", "Inter", "SF Pro", system-ui, -apple-system, sans-serif;
+  background: var(--bg);
   color: var(--text);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px 16px;
 }
 .shell {
-  width: min(960px, 95vw);
-  background: linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
-  border: 1px solid rgba(255,255,255,0.06);
-  border-radius: 18px;
-  padding: 28px;
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(10px);
+  width: min(880px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.55);
 }
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
+  gap: 10px;
+  margin-bottom: 14px;
 }
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
+.brand { display: flex; align-items: center; gap: 10px; }
 .badge {
   padding: 6px 12px;
   border-radius: 999px;
-  background: rgba(108,212,255,0.12);
+  background: rgba(96,165,250,0.15);
   color: var(--accent);
   font-weight: 600;
-  letter-spacing: 0.02em;
-  border: 1px solid rgba(108,212,255,0.3);
+  border: 1px solid rgba(96,165,250,0.4);
 }
-.hero {
-  display: grid;
-  gap: 14px;
-}
-.title {
-  font-size: 28px;
-  margin: 0;
-  letter-spacing: -0.02em;
-}
-.subtitle {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.5;
-}
+.pill { padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.05); font-size: 13px; color: var(--muted); }
+.title { font-size: 26px; margin: 0; letter-spacing: -0.015em; }
+.subtitle { margin: 0; color: var(--muted); line-height: 1.5; }
 .card {
-  background: var(--card);
-  border-radius: 14px;
-  padding: 18px;
-  border: 1px solid rgba(255,255,255,0.04);
+  background: #0f1724;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
 }
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 12px;
-}
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 12px 18px;
-  border-radius: 12px;
+  padding: 11px 16px;
+  border-radius: 10px;
   font-weight: 700;
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.07);
   color: var(--text);
   text-decoration: none;
-  background: linear-gradient(120deg, var(--accent), #5bb6ff);
-  box-shadow: 0 10px 30px rgba(108,212,255,0.35);
-  transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
+  background: linear-gradient(120deg, var(--accent), #4f8cf5);
+  transition: transform 120ms ease, filter 120ms ease;
 }
 .btn:hover { transform: translateY(-1px); filter: brightness(1.05); }
 .btn.secondary {
-  background: linear-gradient(120deg, var(--card), rgba(255,255,255,0.04));
-  box-shadow: none;
+  background: #162032;
   color: var(--text);
+  border-color: var(--border);
 }
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
+  gap: 10px;
+  margin-top: 10px;
 }
 .muted { color: var(--muted); font-size: 14px; }
-.list { margin: 0; padding-left: 18px; color: var(--muted); }
+.list { margin: 8px 0 0 0; padding-left: 18px; color: var(--muted); }
 .list li { margin-bottom: 6px; }
-.form {
-  display: grid;
-  gap: 12px;
-}
-.field {
-  display: grid;
-  gap: 6px;
-}
+.form { display: grid; gap: 12px; margin-top: 10px; }
+.field { display: grid; gap: 6px; }
 .field label { font-weight: 600; color: var(--text); }
 input[type=text], textarea {
   width: 100%;
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(255,255,255,0.04);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #0c1422;
   color: var(--text);
-  padding: 12px;
+  padding: 11px;
   font-size: 15px;
 }
-textarea { resize: vertical; min-height: 140px; }
+textarea { resize: vertical; min-height: 130px; }
 .status {
   padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(108,212,255,0.08);
-  color: var(--text);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #0c1422;
 }
-.status.danger { background: rgba(255,107,107,0.12); color: #ffc0c0; }
-.pill { padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.05); font-size: 13px; }
-.stack { display: grid; gap: 10px; }
-.footer { margin-top: 10px; font-size: 13px; color: var(--muted); }
+.status.danger { border-color: rgba(248,113,113,0.3); color: var(--danger); }
+.stack { display: grid; gap: 8px; }
+.footer { margin-top: 12px; font-size: 13px; color: var(--muted); }
 """
 
 
@@ -359,7 +326,7 @@ async def home():
           <div class="badge">BlockSpin Appeals</div>
           <div class="pill">Secure by design</div>
         </div>
-        <span class="muted">A clear path to request a second chance.</span>
+        <span class="muted">Request a fair, fast review of your ban.</span>
       </div>
       <div class="card hero">
         <div class="stack">
@@ -614,7 +581,7 @@ async def interactions(request: Request):
             return await respond_ephemeral("Invalid interaction payload.")
 
         # Basic replay/spam guard: ignore if custom_id format looks wrong or missing ids
-        if not appeal_id or not user_id:
+        if not appeal_id or not user_id or action not in {"web_appeal_accept", "web_appeal_decline"}:
             return await respond_ephemeral("Invalid interaction data.")
 
         # Run the heavy work in background to avoid interaction timeouts.
@@ -677,27 +644,11 @@ async def interactions(request: Request):
 
         if action == "web_appeal_accept":
             asyncio.create_task(handle_accept())
-            return JSONResponse(
-                {
-                    "type": 7,  # UPDATE_MESSAGE
-                    "data": {
-                        "content": "Appeal is being processed (accept).",
-                        "components": [],
-                    },
-                }
-            )
+            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE
 
         if action == "web_appeal_decline":
             asyncio.create_task(handle_decline())
-            return JSONResponse(
-                {
-                    "type": 7,  # UPDATE_MESSAGE
-                    "data": {
-                        "content": "Appeal is being processed (decline).",
-                        "components": [],
-                    },
-                }
-            )
+            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE
 
     return JSONResponse({"type": 4, "data": {"content": "Unsupported interaction", "flags": 1 << 6}})
 

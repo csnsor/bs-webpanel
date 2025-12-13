@@ -548,6 +548,38 @@ async def dm_user(user_id: str, embed: dict):
         return delivered
 
 
+async def update_appeal_message(channel_id: str, message_id: str, old_embed: dict, status: str, moderator_id: str):
+    """
+    Edits the original appeal message to remove buttons and update status.
+    """
+    new_embed = old_embed.copy()
+
+    if status == "accepted":
+        color = 0x2ECC71  # Green
+        title_suffix = " (ACCEPTED)"
+    else:
+        color = 0xE74C3C  # Red
+        title_suffix = " (DECLINED)"
+
+    new_embed["color"] = color
+    new_embed["title"] = new_embed.get("title", "Appeal") + title_suffix
+
+    # Add a field showing who handled it
+    new_embed["fields"] = new_embed.get("fields", []) + [
+        {"name": "Action Taken", "value": f"{status.title()} by <@{moderator_id}>", "inline": False}
+    ]
+
+    async with httpx.AsyncClient() as client:
+        await client.patch(
+            f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            json={
+                "embeds": [new_embed],
+                "components": [],  # Removes the buttons
+            },
+        )
+
+
 @app.post("/interactions")
 async def interactions(request: Request):
     body = await request.body()
@@ -562,6 +594,10 @@ async def interactions(request: Request):
         data = payload.get("data", {})
         custom_id = data.get("custom_id", "")
         member = payload.get("member") or {}
+        user_obj = member.get("user") or {}
+        moderator_id = user_obj.get("id")
+
+        # Check permissions
         roles = set(map(int, member.get("roles", [])))
         if MODERATOR_ROLE_ID not in roles:
             return await respond_ephemeral("You do not have permission to handle appeals.")
@@ -570,6 +606,11 @@ async def interactions(request: Request):
             action, appeal_id, user_id = custom_id.split(":")
         except ValueError:
             return await respond_ephemeral("Invalid interaction payload.")
+
+        # Extract message details for editing later
+        channel_id = payload["channel_id"]
+        message_id = payload["message"]["id"]
+        original_embed = payload["message"]["embeds"][0]
 
         # Basic replay/spam guard: ignore if custom_id format looks wrong or missing ids
         if not appeal_id or not user_id or action not in {"web_appeal_accept", "web_appeal_decline"}:
@@ -598,70 +639,68 @@ async def interactions(request: Request):
                         f"{DISCORD_API_BASE}/channels/{payload['channel_id']}/messages/{payload['message']['id']}",
                         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
                     )
-                delivered = await dm_user(
+                dm_delivered = await dm_user(
                     user_id,
                     {
                         "title": "Appeal Accepted",
-                        "description": "Your appeal was accepted. You have been unbanned.",
+                        "description": "Your appeal has been reviewed and accepted. You have been unbanned.",
                         "color": 0x2ECC71,
                     },
                 )
-                if not delivered:
+
+                # Update the moderator message (Visual feedback & Remove buttons)
+                await update_appeal_message(channel_id, message_id, original_embed, "accepted", moderator_id)
+
+                # Log to log channel
+                log_content = f"Appeal `{appeal_id}` **ACCEPTED** by <@{moderator_id}>. User <@{user_id}> unbanned."
+                if not dm_delivered:
+                    log_content += " (DM failed)."
+
+                async with httpx.AsyncClient() as client:
                     await client.post(
                         f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
                         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                        json={
-                            "content": (
-                                f"Appeal `{appeal_id}` accepted. DM to <@{user_id}> could not be delivered "
-                                f"(likely no mutual server)."
-                            )
-                        },
+                        json={"content": log_content},
                     )
             except Exception as exc:  # log for debugging
                 logging.exception("Failed to process acceptance for appeal %s: %s", appeal_id, exc)
 
         async def handle_decline():
             try:
+                # 1. DM the user
+                dm_delivered = await dm_user(
+                    user_id,
+                    {
+                        "title": "Appeal Declined",
+                        "description": "Your appeal has been reviewed and declined.",
+                        "color": 0xE74C3C,
+                    },
+                )
+
+                # 2. Update the moderator message (Visual feedback & Remove buttons)
+                await update_appeal_message(channel_id, message_id, original_embed, "declined", moderator_id)
+
+                # 3. Log to log channel
+                log_content = f"Appeal `{appeal_id}` **DECLINED** by <@{moderator_id}>."
+                if not dm_delivered:
+                    log_content += " (DM failed)."
+
                 async with httpx.AsyncClient() as client:
                     await client.post(
                         f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
                         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                        json={
-                            "content": (
-                                f"Appeal `{appeal_id}` declined by <@{member.get('user', {}).get('id')}>. "
-                                f"User <@{user_id}> notified."
-                            )
-                        },
-                    )
-                delivered = await dm_user(
-                    user_id,
-                    {
-                        "title": "Appeal Declined",
-                        "description": "Your appeal was declined.",
-                        "color": 0xE74C3C,
-                    },
-                )
-                if not delivered:
-                    await client.post(
-                        f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
-                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                        json={
-                            "content": (
-                                f"Appeal `{appeal_id}` declined. DM to <@{user_id}> could not be delivered "
-                                f"(likely no mutual server)."
-                            )
-                        },
+                        json={"content": log_content},
                     )
             except Exception as exc:  # log for debugging
                 logging.exception("Failed to process decline for appeal %s: %s", appeal_id, exc)
 
         if action == "web_appeal_accept":
             asyncio.create_task(handle_accept())
-            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE keeps buttons but avoids timeouts
+            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE
 
         if action == "web_appeal_decline":
             asyncio.create_task(handle_decline())
-            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE keeps buttons but avoids timeouts
+            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE
 
     return JSONResponse({"type": 4, "data": {"content": "Unsupported interaction", "flags": 1 << 6}})
 

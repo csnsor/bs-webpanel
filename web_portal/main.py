@@ -63,10 +63,13 @@ serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 _appeal_rate_limit: Dict[str, float] = {}  # {user_id: timestamp_of_last_submit}
 _used_sessions: Dict[str, float] = {}  # {session_token: timestamp_used}
 _ip_requests: Dict[str, List[float]] = {}  # {ip: [timestamps]}
+_ban_first_seen: Dict[str, float] = {}  # {user_id: first time we saw the ban}
+_appeal_locked: Dict[str, bool] = {}  # {user_id: True if appealed already}
 APPEAL_COOLDOWN_SECONDS = int(os.getenv("APPEAL_COOLDOWN_SECONDS", "300"))  # 5 minutes by default
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "900"))  # sessions expire after 15 minutes
 APPEAL_IP_MAX_REQUESTS = int(os.getenv("APPEAL_IP_MAX_REQUESTS", "8"))
 APPEAL_IP_WINDOW_SECONDS = int(os.getenv("APPEAL_IP_WINDOW_SECONDS", "60"))
+APPEAL_WINDOW_SECONDS = int(os.getenv("APPEAL_WINDOW_SECONDS", str(7 * 24 * 3600)))  # 7 days default
 
 BASE_STYLES = """
 :root {
@@ -187,6 +190,7 @@ def render_page(title: str, body_html: str) -> str:
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{html.escape(title)}</title>
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://discord.com https://*.discord.com;">
         <style>{BASE_STYLES}</style>
       </head>
       <body>
@@ -330,36 +334,33 @@ async def home():
       </div>
       <div class="card hero">
         <div class="stack">
-          <h1 class="title">Request a review of your ban</h1>
-          <p class="subtitle">
-            Sign in with Discord so we know it’s really you. We’ll collect the details needed for the BlockSpin
-            moderation team to review your case quickly.
-          </p>
+          <h1 class="title">Review your status</h1>
+          <p class="subtitle">Sign in with Discord to confirm it’s you, see your ban details, and request one appeal within 7 days.</p>
           <div class="actions">
-            <a class="btn" href="{oauth_authorize_url(state)}">Continue with Discord</a>
-            <span class="pill">No password stored · OAuth only</span>
+            <a class="btn" href="{oauth_authorize_url(state)}">Login with Discord</a>
+            <span class="pill">OAuth only · we never see your password</span>
           </div>
         </div>
       </div>
       <div class="grid" style="margin-top:12px;">
         <div class="card">
-          <strong>Safety</strong>
+          <strong>What happens</strong>
           <ul class="list">
-            <li>Signed sessions, single-use forms</li>
-            <li>Cooldown + IP throttling to block spam</li>
-            <li>Discord interaction signatures verified</li>
+            <li>We verify your Discord account</li>
+            <li>We show your ban reason</li>
+            <li>You can submit one appeal within the window</li>
           </ul>
         </div>
         <div class="card">
-          <strong>What to expect</strong>
+          <strong>Tips</strong>
           <ul class="list">
-            <li>We’ll confirm your Discord identity</li>
-            <li>We ask for evidence and what changed</li>
-            <li>You get a reference ID after submitting</li>
+            <li>Use the same account that was banned</li>
+            <li>Keep your explanation concise and honest</li>
+            <li>Include any evidence up front</li>
           </ul>
         </div>
       </div>
-      <div class="footer">Tip: Make sure you’re signed into the correct Discord account before you continue.</div>
+      <div class="footer">Make sure you’re signed into the correct Discord account before continuing.</div>
     """
     return HTMLResponse(render_page("BlockSpin Appeals", content), headers={"Cache-Control": "no-store"})
 
@@ -389,12 +390,44 @@ async def callback(code: str, state: str):
         """
         return HTMLResponse(render_page("No active ban", content), status_code=200, headers={"Cache-Control": "no-store"})
 
+    now = time.time()
+    first_seen = _ban_first_seen.get(user["id"], now)
+    _ban_first_seen[user["id"]] = first_seen
+    window_expires_at = first_seen + APPEAL_WINDOW_SECONDS
+    window_remaining = int(max(0, window_expires_at - now))
+    already_appealed = _appeal_locked.get(user["id"], False)
+
+    if now > window_expires_at:
+        expired = f"""
+          <div class="card status danger">
+            <div class="stack">
+              <div class="badge">Appeal window closed</div>
+              <p class="subtitle">This ban is older than 7 days. The appeal window has expired.</p>
+            </div>
+          </div>
+          <div class="actions"><a class="btn secondary" href="/">Return home</a></div>
+        """
+        return HTMLResponse(render_page("Appeal window closed", expired), status_code=403, headers={"Cache-Control": "no-store"})
+
+    if already_appealed:
+        blocked = f"""
+          <div class="card status danger">
+            <div class="stack">
+              <div class="badge">Appeal already submitted</div>
+              <p class="subtitle">You can submit only one appeal for this ban.</p>
+            </div>
+          </div>
+          <div class="actions"><a class="btn secondary" href="/">Return home</a></div>
+        """
+        return HTMLResponse(render_page("Appeal already submitted", blocked), status_code=409, headers={"Cache-Control": "no-store"})
+
     session = serializer.dumps(
         {
             "uid": user["id"],
             "uname": f"{user['username']}#{user.get('discriminator','0')}",
             "ban_reason": ban.get("reason", "No reason provided."),
             "iat": time.time(),
+            "ban_first_seen": first_seen,
         }
     )
     uname = html.escape(f"{user['username']}#{user.get('discriminator','0')}")
@@ -428,7 +461,7 @@ async def callback(code: str, state: str):
           <button class="btn" type="submit">Submit appeal</button>
           <a class="btn secondary" href="/">Cancel</a>
         </div>
-        <div class="muted">Your submission is single-use and expires after {SESSION_TTL_SECONDS // 60} minutes.</div>
+        <div class="muted">One appeal per ban. Time remaining: {max(1, window_remaining // 60)} minutes.</div>
       </form>
     """
     return HTMLResponse(
@@ -459,6 +492,10 @@ async def submit(
     if session in _used_sessions:
         raise HTTPException(status_code=409, detail="This appeal was already submitted.")
 
+    first_seen = float(data.get("ban_first_seen", now))
+    if now - first_seen > APPEAL_WINDOW_SECONDS:
+        raise HTTPException(status_code=403, detail="This ban is older than the appeal window.")
+
     # Per-IP throttle to slow basic spam
     ip = get_client_ip(request)
     enforce_ip_rate_limit(ip)
@@ -481,6 +518,7 @@ async def submit(
     )
 
     _used_sessions[session] = now
+    _appeal_locked[data["uid"]] = True
     # prune old used sessions
     stale_sessions = [token for token, ts in _used_sessions.items() if now - ts > SESSION_TTL_SECONDS * 2]
     for token in stale_sessions:
@@ -584,6 +622,38 @@ async def interactions(request: Request):
         if not appeal_id or not user_id or action not in {"web_appeal_accept", "web_appeal_decline"}:
             return await respond_ephemeral("Invalid interaction data.")
 
+        def ack_message(label: str) -> JSONResponse:
+            # Acknowledge and disable buttons to avoid double-processing.
+            return JSONResponse(
+                {
+                    "type": 7,  # UPDATE_MESSAGE
+                    "data": {
+                        "content": f"{label}…",
+                        "components": [
+                            {
+                                "type": 1,
+                                "components": [
+                                    {
+                                        "type": 2,
+                                        "style": 3,
+                                        "label": "Accept",
+                                        "custom_id": f"web_appeal_accept:{appeal_id}:{user_id}",
+                                        "disabled": True,
+                                    },
+                                    {
+                                        "type": 2,
+                                        "style": 4,
+                                        "label": "Decline",
+                                        "custom_id": f"web_appeal_decline:{appeal_id}:{user_id}",
+                                        "disabled": True,
+                                    },
+                                ],
+                            }
+                        ],
+                    },
+                }
+            )
+
         # Run the heavy work in background to avoid interaction timeouts.
         async def handle_accept():
             try:
@@ -644,11 +714,11 @@ async def interactions(request: Request):
 
         if action == "web_appeal_accept":
             asyncio.create_task(handle_accept())
-            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE
+            return ack_message("Processing acceptance")
 
         if action == "web_appeal_decline":
             asyncio.create_task(handle_decline())
-            return JSONResponse({"type": 6})  # DEFERRED_UPDATE_MESSAGE
+            return ack_message("Processing decline")
 
     return JSONResponse({"type": 4, "data": {"content": "Unsupported interaction", "flags": 1 << 6}})
 

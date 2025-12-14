@@ -984,48 +984,11 @@ async def home(request: Request, lang: Optional[str] = None):
     user_chip = build_user_chip(user_session)
     strings = dict(strings)
     strings["user_chip"] = user_chip
-    history_html = ""
-    if user_session and is_supabase_ready():
-        history = await fetch_appeal_history(user_session["uid"])
-        history_html = render_history_items(history)
-    elif user_session:
-        history_html = "<div class='muted'></div>"
-
-    status_block = ""
-    if user_session:
-        uname = html.escape(clean_display_name(user_session.get("display_name") or user_session.get("uname", "Your account")))
-        status_block = f"""
-          <div class="card">
-            <h2>{strings['welcome_back']}, {uname}</h2>
-            <p class="muted">{strings['appeal_blurb']}</p>
-            <div class="btn-row">
-              <a class="btn secondary" href="/status">{strings['status_cta']}</a>
-              <a class="btn" href="{oauth_authorize_url(state)}">{strings['review_ban']}</a>
-            </div>
-          </div>
-        """
-
-    history_block = f"""
-      <div class="card">
-        <h2>{strings['history_title']}</h2>
-        <p class="muted">{strings['history_blurb']}</p>
-        {history_html}
-      </div>
-    """
-    if not status_block:
-        status_block = f"""
-          <div class="card">
-            <h2>{strings['stay_signed_in']}</h2>
-            <p class="muted">{strings['stay_signed_in_blurb']}</p>
-            <div class="btn-row">
-              <a class="btn" href="{oauth_authorize_url(state)}">{strings['start_now']}</a>
-            </div>
-          </div>
-        """
 
     login_button = ""
     if not user_session:
         login_button = f'<a class="btn" href="{oauth_authorize_url(state)}">{strings["login"]}</a>'
+    status_button = f'<a class="btn secondary" href="/status">{strings["status_cta"]}</a>'
 
     content = f"""
       <div class="hero">
@@ -1034,12 +997,7 @@ async def home(request: Request, lang: Optional[str] = None):
           <p class="lead">{strings['hero_sub']}</p>
           <div class="btn-row">
             {login_button}
-            <a class="btn secondary" href="#how-it-works">{strings['how_it_works']}</a>
-          </div>
-          <div class="timeline" id="how-it-works">
-            <div class="step">{strings['step_1']}</div>
-            <div class="step">{strings['step_2']}</div>
-            <div class="step">{strings['step_3']}</div>
+            {status_button}
           </div>
           <div class="btn-row" style="margin-top:10px;">
             <a class="btn secondary" href="/tos">Terms of Service</a>
@@ -1051,11 +1009,20 @@ async def home(request: Request, lang: Optional[str] = None):
         <div class="card">
           <h2>{strings['appeal_cta']}</h2>
           <p class="muted">{strings['appeal_blurb']}</p>
-          {login_button or f'<a class="btn secondary" href="/status">{strings["status_cta"]}</a>'}
-          <div class="callout" style="margin-top:12px;">BlockSpin • Secure moderation</div>
+          {login_button or f'<a class="btn" href="{oauth_authorize_url(state)}">{strings["review_ban"]}</a>'}
+          <div class="btn-row" style="margin-top:12px;">
+            <a class="btn secondary" href="/status">{strings["status_cta"]}</a>
+          </div>
         </div>
-        {status_block}
-        {history_block}
+        <div class="card">
+          <h2>Quick links</h2>
+          <p class="muted">Check your status or review policies.</p>
+          <div class="btn-row">
+            <a class="btn secondary" href="/status">{strings["status_cta"]}</a>
+            <a class="btn secondary" href="/tos">TOS</a>
+            <a class="btn secondary" href="/privacy">Privacy</a>
+          </div>
+        </div>
       </div>
     """
     response = HTMLResponse(render_page("BlockSpin Appeals", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
@@ -1123,10 +1090,12 @@ async def status_page(request: Request, lang: Optional[str] = None):
 
     content = f"""
       <div class="card">
-        <div class="pill">BlockSpin | Appeal status</div>
         <h1 style="margin:12px 0 8px;">Appeal history for {html.escape(clean_display_name(session.get('display_name') or session.get('uname','you')))}</h1>
         <p class="muted">You are signed in. We keep this session encrypted for {PERSIST_SESSION_SECONDS // 86400} days.</p>
         {history_html}
+        <div class="btn-row" style="margin-top:10px;">
+          <a class="btn secondary" href="/">Back home</a>
+        </div>
         <div class="footer">Need to update details? Start a new session from the home page.</div>
       </div>
     """
@@ -1299,6 +1268,9 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
           <div style="margin-top:12px;">
             <h3 style="margin:0 0 6px;">Your history</h3>
             {history_html}
+          </div>
+          <div class="btn-row" style="margin-top:10px;">
+            <a class="btn secondary" href="/">Back home</a>
           </div>
         </div>
       </div>

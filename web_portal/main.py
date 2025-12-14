@@ -663,7 +663,7 @@ def build_user_chip(session: Optional[dict]) -> str:
     if not session:
         return ""
     name = clean_display_name(session.get("display_name") or session.get("uname") or "")
-    avatar = session.get("avatar_url")
+    avatar = session.get("avatar_url") or ""
     if not avatar:
         try:
             avatar = f"https://cdn.discordapp.com/embed/avatars/{int(session.get('uid','0'))%5}.png"

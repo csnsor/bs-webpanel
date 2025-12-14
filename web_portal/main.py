@@ -82,10 +82,10 @@ serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 async def startup_event():
     if not bot_client:
         logging.warning("discord.py not available; bot client not started.")
-        return
+        raise RuntimeError("discord.py is required for the appeal bot. Please install dependencies.")
     if not DISCORD_BOT_TOKEN:
         logging.warning("DISCORD_BOT_TOKEN missing; bot client not started.")
-        return
+        raise RuntimeError("DISCORD_BOT_TOKEN missing; bot client cannot start.")
     asyncio.create_task(bot_client.start(DISCORD_BOT_TOKEN))
 
 @app.middleware("http")
@@ -144,12 +144,14 @@ if discord:
     async def on_message(message):
         if message.author.bot:
             return
+        ts_str = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
         _message_buffer[str(message.author.id)].append(
             {
                 "content": message.content,
                 "channel_id": str(message.channel.id),
-                "timestamp": str(message.created_at),
+                "timestamp": ts_str,
                 "id": str(message.id),
+                "channel_name": getattr(message.channel, "name", "unknown"),
             }
         )
 
@@ -339,6 +341,28 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.5; }
 .status-chip.accepted { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
 .status-chip.declined { color: #f87171; background: rgba(248, 113, 113, 0.1); }
 .status-chip.pending { color: #818cf8; background: rgba(129, 140, 248, 0.1); }
+
+/* chat log */
+.chat-box {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: "Consolas", "Monaco", monospace;
+  font-size: 13px;
+}
+.chat-row {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.chat-row:last-child { border-bottom: none; }
+.chat-time { color: var(--muted); min-width: 130px; font-size: 11px; }
+.chat-content { color: var(--text); word-break: break-word; }
+.chat-channel { color: var(--accent); font-weight: bold; font-size: 11px; }
 
 .footer { margin-top: 30px; font-size: 13px; color: var(--muted); opacity: 0.6; text-align: center; }
 """
@@ -1020,7 +1044,7 @@ async def send_log_message(content: str):
 
 
 async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
-    """Fetch ban context cached by the bot and stored in Supabase; delete after use."""
+    """Fetch ban context cached by the bot and stored in Supabase; keep for reuse."""
     if not is_supabase_ready():
         return []
     try:
@@ -1030,13 +1054,8 @@ async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
             params={"user_id": f"eq.{user_id}", "limit": 1},
         )
         if recs and recs[0].get("messages"):
-            messages = recs[0]["messages"][:limit]
-            # Clean up to avoid long retention
-            try:
-                await supabase_request("delete", "banned_user_context", params={"user_id": f"eq.{user_id}"})
-            except Exception as exc:
-                logging.warning("Failed to delete used context for %s: %s", user_id, exc)
-            return messages
+            messages = recs[0]["messages"]
+            return sorted(messages, key=lambda x: x.get("timestamp", ""), reverse=True)[:limit]
     except Exception as exc:
         logging.warning("Failed to fetch context for %s: %s", user_id, exc)
     return []
@@ -1406,13 +1425,23 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
     message_cache_html = ""
     if message_cache:
-        rows = "".join(
-            f"<div class='status'><strong>{html.escape(m.get('timestamp',''))}</strong><br/>{html.escape(m.get('content') or '')}</div>"
-            for m in message_cache
-        )
-        message_cache_html = rows
+        msgs_to_show = list(reversed(message_cache))
+        rows = []
+        for m in msgs_to_show:
+            ts = html.escape(m.get("timestamp", ""))
+            content = html.escape(m.get("content") or "")
+            channel = html.escape(m.get("channel_name") or "#channel")
+            rows.append(
+                f"""
+                <div class='chat-row'>
+                    <div class='chat-time'>{ts} <span class='chat-channel'>{channel}</span></div>
+                    <div class='chat-content'>{content}</div>
+                </div>
+                """
+            )
+        message_cache_html = f"<div class='chat-box'>{''.join(rows)}</div>"
     else:
-        message_cache_html = f"<div class='muted'>{strings['no_messages']}</div>"
+        message_cache_html = f"<div class='muted' style='padding:10px; border:1px dashed var(--border); border-radius:8px;'>{strings['no_messages']}</div>"
     content = f"""
       <div class="grid-2">
         <div class="form-card">
@@ -1541,7 +1570,7 @@ async def submit(
 
     asyncio.create_task(
         send_log_message(
-            f"[appeal_submitted] appeal={appeal_id} user={user['id']} ip_hash={hash_ip(ip)} lang={user_lang} ban_reason=\"{data.get('ban_reason','N/A')}\" msg_ctx={len(message_cache or [])}"
+            f"[appeal_submitted] appeal={appeal_id} user={user['id']} ip_hash={hash_ip(ip)} lang={user_lang} ban_reason=\"{data.get('ban_reason','N/A')}\" msg_ctx={len(data.get('message_cache') or [])}"
         )
     )
 

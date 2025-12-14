@@ -47,9 +47,16 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_TABLE = "discord-appeals"
 SUPABASE_SESSION_TABLE = "discord-appeal-sessions"
 INVITE_LINK = "https://discord.gg/blockspin"
-MESSAGE_CACHE_GUILD_ID = os.getenv("MESSAGE_CACHE_GUILD_ID", "1065973360040890418")
+MESSAGE_CACHE_GUILD_IDS_RAW = os.getenv("MESSAGE_CACHE_GUILD_ID", "1337420081382297682")
 READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
+MESSAGE_CACHE_GUILD_IDS = {
+    gid.strip()
+    for gid in MESSAGE_CACHE_GUILD_IDS_RAW.split(",")
+    if gid.strip()
+}
+if not MESSAGE_CACHE_GUILD_IDS:
+    MESSAGE_CACHE_GUILD_IDS = None
 
 OAUTH_SCOPES = "identify guilds.join"
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -162,12 +169,15 @@ bot_client = None
 _message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
 _recent_message_context: Dict[str, Tuple[List[dict], float]] = {}
 RECENT_MESSAGE_CACHE_TTL = int(os.getenv("RECENT_MESSAGE_CACHE_TTL", "120"))
-MESSAGE_SNAPSHOT_INTERVAL = int(os.getenv("MESSAGE_SNAPSHOT_INTERVAL", "60"))
-_last_snapshot: Dict[str, float] = {}
 
 
 def uid(value: Any) -> str:
     return str(value)
+
+def should_track_messages(guild_id: int) -> bool:
+    if MESSAGE_CACHE_GUILD_IDS is None:
+        return True
+    return str(guild_id) in MESSAGE_CACHE_GUILD_IDS
 
 if discord:
     intents = discord.Intents.default()
@@ -188,7 +198,8 @@ if discord:
         if message.author.bot or not message.guild:
             return
 
-        if MESSAGE_CACHE_GUILD_ID and str(message.guild.id) != str(MESSAGE_CACHE_GUILD_ID):
+        if not should_track_messages(message.guild.id):
+            logging.debug("Skipping message cache for guild %s", message.guild.id)
             return
 
         user_id = uid(message.author.id)
@@ -1427,17 +1438,13 @@ async def send_log_message(content: str):
 async def maybe_snapshot_messages(user_id: str, guild_id: str):
     if not is_supabase_ready():
         return
-    if not MESSAGE_CACHE_GUILD_ID or str(guild_id) != MESSAGE_CACHE_GUILD_ID:
-        return
-    now = time.time()
-    last = _last_snapshot.get(user_id, 0)
-    if now - last < MESSAGE_SNAPSHOT_INTERVAL:
+    if not should_track_messages(guild_id):
+        logging.debug("Message caching skipped for guild %s", guild_id)
         return
     entries = list(_message_buffer.get(user_id, []))
     if not entries:
         return
-    _last_snapshot[user_id] = now
-    asyncio.create_task(persist_message_snapshot(user_id, entries[-15:]))
+    await persist_message_snapshot(user_id, entries[-15:])
 
 
 async def persist_message_snapshot(user_id: str, messages: List[dict]):

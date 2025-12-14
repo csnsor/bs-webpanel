@@ -5,6 +5,7 @@ import asyncio
 import time
 import html
 import copy
+import hashlib
 from typing import Optional, Tuple, Dict, List
 
 import httpx
@@ -36,6 +37,7 @@ SECRET_KEY = os.getenv("PORTAL_SECRET_KEY") or secrets.token_hex(16)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_TABLE = "discord-appeals"
+SUPABASE_SESSION_TABLE = "discord-appeal-sessions"
 INVITE_LINK = "https://discord.gg/blockspin"
 MESSAGE_CACHE_GUILD_ID = os.getenv("MESSAGE_CACHE_GUILD_ID", "1065973360040890418")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
@@ -220,6 +222,7 @@ body {
   border-color: var(--border);
 }
 .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.btn-row.tight { flex-wrap: nowrap; gap: 10px; }
 .status {
   font-size: 13px;
   color: var(--muted);
@@ -298,6 +301,7 @@ textarea { resize: vertical; min-height: 140px; }
 .live-status .label { display:block; font-weight:700; margin-bottom:4px; }
 .live-status .value { color: var(--muted); font-size:13px; }
 @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .btn-row.tight { flex-wrap: wrap; } }
 """
 
 LANG_STRINGS = {
@@ -363,6 +367,16 @@ def normalize_language(lang: Optional[str]) -> str:
     if "-" in lang:
         lang = lang.split("-")[0]
     return lang or "en"
+
+
+def hash_value(raw: str) -> str:
+    return hashlib.sha256(f"{SECRET_KEY}:{raw}".encode("utf-8", "ignore")).hexdigest()
+
+
+def hash_ip(ip: str) -> str:
+    if not ip or ip == "unknown":
+        return "unknown"
+    return hash_value(ip)
 
 
 async def detect_language(request: Request, lang_param: Optional[str] = None) -> str:
@@ -482,14 +496,14 @@ def read_user_session(request: Request) -> Optional[dict]:
         return None
 
 
-async def supabase_request(method: str, table: str, *, params: Optional[dict] = None, payload: Optional[dict] = None):
+async def supabase_request(method: str, table: str, *, params: Optional[dict] = None, payload: Optional[dict] = None, prefer: Optional[str] = None):
     if not is_supabase_ready():
         return None
     headers = {
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json",
-        "Prefer": "return=representation",
+        "Prefer": prefer or "return=representation",
     }
     url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}"
     try:
@@ -533,6 +547,39 @@ async def log_appeal_to_supabase(
         "message_cache": message_cache,
     }
     await supabase_request("post", SUPABASE_TABLE, payload=payload)
+
+
+async def get_remote_last_submit(user_id: str) -> Optional[float]:
+    recs = await supabase_request(
+        "get",
+        SUPABASE_SESSION_TABLE,
+        params={"user_id": f"eq.{user_id}", "order": "last_submit.desc", "limit": 1},
+    )
+    if recs:
+        try:
+            return float(recs[0].get("last_submit") or 0)
+        except Exception:
+            return None
+    return None
+
+
+async def is_session_token_used(token_hash: str) -> bool:
+    recs = await supabase_request(
+        "get",
+        SUPABASE_SESSION_TABLE,
+        params={"token_hash": f"eq.{token_hash}", "limit": 1},
+    )
+    return bool(recs)
+
+
+async def mark_session_token(token_hash: str, user_id: str, ts: float):
+    payload = {"token_hash": token_hash, "user_id": user_id, "last_submit": int(ts)}
+    await supabase_request(
+        "post",
+        SUPABASE_SESSION_TABLE,
+        payload=payload,
+        prefer="resolution=merge-duplicates",
+    )
 
 
 async def update_appeal_status(
@@ -607,6 +654,15 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     toggle_lang = "es" if lang != "es" else "en"
     toggle_label = strings.get("language_switch", "Switch language")
     user_chip = strings.get("user_chip", "")
+    script_block = strings.get("script_block")
+    script_nonce = strings.get("script_nonce")
+    base_csp = (
+        "default-src 'self'; "
+        "img-src 'self' data: https://cdn.discordapp.com https://media.discordapp.net; "
+        "style-src 'self' 'unsafe-inline'; "
+        "connect-src 'self' https://discord.com https://*.discord.com; "
+    )
+    csp = base_csp + (f"script-src 'self' 'nonce-{script_nonce}'" if script_nonce else "script-src 'self'")
     favicon = (
         "data:image/svg+xml,"
         "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E"
@@ -622,7 +678,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{html.escape(title)}</title>
         <link rel="icon" type="image/svg+xml" href="{favicon}">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://discord.com https://*.discord.com;">
+        <meta http-equiv="Content-Security-Policy" content="{csp}">
         <style>{BASE_STYLES}</style>
       </head>
       <body>
@@ -643,6 +699,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
           </div>
           <div class="footer">© {year} BlockSpin • Secure Appeals</div>
         </div>
+        {f\"<script nonce='{script_nonce}'>{script_block}</script>\" if script_block else \"\"}
       </body>
     </html>
     """
@@ -991,30 +1048,30 @@ async def home(request: Request, lang: Optional[str] = None):
     ip = get_client_ip(request)
     state_token = issue_state_token(ip)
     state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
-    asyncio.create_task(send_log_message(f"[visit_home] ip={ip} lang={current_lang}"))
+    asyncio.create_task(send_log_message(f"[visit_home] ip_hash={hash_ip(ip)} lang={current_lang}"))
     user_session = read_user_session(request)
     user_chip = build_user_chip(user_session)
     strings = dict(strings)
     strings["user_chip"] = user_chip
 
     login_button = ""
-    status_button = f'<a class="btn secondary" href="/status">{strings["status_cta"]}</a>'
-    if user_session:
-        review_button = status_button.replace("secondary", "")
-    else:
-        review_button = f'<a class="btn" href="{oauth_authorize_url(state)}">{strings.get("review_ban","Review my ban")}</a>'
-        login_button = review_button
+    if not user_session:
+        login_button = f'<a class="btn" href="{oauth_authorize_url(state)}">{strings["login"]}</a>'
+    review_button = (
+        f'<a class="btn" href="/status">{strings.get("review_ban","Review my ban")}</a>'
+        if user_session
+        else f'<a class="btn" href="{oauth_authorize_url(state)}">{strings.get("review_ban","Review my ban")}</a>'
+    )
+    status_button = "" if user_session else f'<a class="btn secondary" href="/status">{strings["status_cta"]}</a>'
 
     content = f"""
       <div class="hero">
         <div>
           <h1>{strings['hero_title']}</h1>
           <p class="lead" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{strings['hero_sub']}</p>
-          <div class="btn-row">
+          <div class="btn-row tight">
             {review_button}
-            {status_button if not user_session else ''}
-          </div>
-          <div class="btn-row" style="margin-top:10px;">
+            {status_button}
             <a class="btn secondary" href="/tos">Terms of Service</a>
             <a class="btn secondary" href="/privacy">Privacy</a>
           </div>
@@ -1025,37 +1082,37 @@ async def home(request: Request, lang: Optional[str] = None):
         </div>
       </div>
     """
+    script_nonce = secrets.token_urlsafe(12)
+    strings["script_nonce"] = script_nonce
+    strings["script_block"] = f"""
+    (function() {{
+      const el = document.getElementById('live-status');
+      if (!el) return;
+      const valueEl = el.querySelector('.value');
+      async function tick() {{
+        try {{
+          const res = await fetch('/status/data', {{ headers: {{ 'Accept': 'application/json' }} }});
+          if (!res.ok) throw new Error('status ' + res.status);
+          const data = await res.json();
+          const history = data.history || [];
+          if (!history.length) {{
+            valueEl.textContent = 'No appeals yet.';
+            return;
+          }}
+          const latest = history[0];
+          const status = latest.status || 'pending';
+          const ref = latest.appeal_id || 'n/a';
+          valueEl.textContent = 'Latest: ' + status + ' (ref ' + ref + ')';
+        }} catch (e) {{
+          valueEl.textContent = 'Live updates unavailable.';
+        }}
+      }}
+      tick();
+      setInterval(tick, 15000);
+    }})();
+    """
     response = HTMLResponse(render_page("BlockSpin Appeals", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
     response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
-    response.body += f"""
-    <script>
-      (() => {{
-        const el = document.getElementById('live-status');
-        if (!el) return;
-        const valueEl = el.querySelector('.value');
-        async function tick() {{
-          try {{
-            const res = await fetch('/status/data', {{ headers: {{ 'Accept': 'application/json' }} }});
-            if (!res.ok) throw new Error('status ' + res.status);
-            const data = await res.json();
-            const history = data.history || [];
-            if (!history.length) {{
-              valueEl.textContent = 'No appeals yet.';
-              return;
-            }}
-            const latest = history[0];
-            const status = latest.status || 'pending';
-            const ref = latest.appeal_id || 'n/a';
-            valueEl.textContent = 'Latest: ' + status + ' (ref ' + ref + ')';
-          }} catch (e) {{
-            valueEl.textContent = 'Live updates unavailable.';
-          }}
-        }}
-        tick();
-        setInterval(tick, 15000);
-      }})();
-    </script>
-    """.encode()
     return response
 
 
@@ -1095,7 +1152,7 @@ async def status_page(request: Request, lang: Optional[str] = None):
     current_lang = await detect_language(request, lang)
     strings = await get_strings(current_lang)
     ip = get_client_ip(request)
-    asyncio.create_task(send_log_message(f"[visit_status] ip={ip} lang={current_lang}"))
+    asyncio.create_task(send_log_message(f"[visit_status] ip_hash={hash_ip(ip)} lang={current_lang}"))
     session = read_user_session(request)
     strings = dict(strings)
     strings["user_chip"] = build_user_chip(session)
@@ -1187,7 +1244,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         raise HTTPException(status_code=400, detail="Invalid or replayed state")
     asyncio.create_task(
         send_log_message(
-            f"[auth] user={user['id']} ip={ip} lang={current_lang}"
+            f"[auth] user={user['id']} ip_hash={hash_ip(ip)} lang={current_lang}"
         )
     )
 
@@ -1343,11 +1400,14 @@ async def submit(
 
     now = time.time()
 
+    token_hash = hash_value(session)
     # Session expiry + single-use guard
     issued_at = float(data.get("iat", 0))
     if not issued_at or now - issued_at > SESSION_TTL_SECONDS:
         raise HTTPException(status_code=400, detail="This form session expired. Please restart the appeal.")
-    if session in _used_sessions:
+    if _used_sessions.get(token_hash):
+        raise HTTPException(status_code=409, detail="This appeal was already submitted.")
+    if await is_session_token_used(token_hash):
         raise HTTPException(status_code=409, detail="This appeal was already submitted.")
 
     first_seen = float(data.get("ban_first_seen", now))
@@ -1361,12 +1421,15 @@ async def submit(
     enforce_ip_rate_limit(ip)
     asyncio.create_task(
         send_log_message(
-            f"[appeal_attempt] user={data.get('uid')} ip={ip}"
+            f"[appeal_attempt] user={data.get('uid')} ip_hash={hash_ip(ip)}"
         )
     )
 
-    # Rate limit to prevent spam
+    # Rate limit to prevent spam (persisted)
+    remote_last = await get_remote_last_submit(data["uid"])
     last = _appeal_rate_limit.get(data["uid"])
+    if remote_last:
+        last = max(last or 0, remote_last)
     if last and now - last < APPEAL_COOLDOWN_SECONDS:
         wait = int(APPEAL_COOLDOWN_SECONDS - (now - last))
         raise HTTPException(status_code=429, detail=f"Please wait {wait} seconds before submitting another appeal.")
@@ -1404,11 +1467,13 @@ async def submit(
 
     asyncio.create_task(
         send_log_message(
-            f"[appeal_submitted] appeal={appeal_id} user={user['id']} ip={ip} lang={user_lang} ban_reason=\"{data.get('ban_reason','N/A')}\""
+            f"[appeal_submitted] appeal={appeal_id} user={user['id']} ip_hash={hash_ip(ip)} lang={user_lang} ban_reason=\"{data.get('ban_reason','N/A')}\""
         )
     )
 
-    _used_sessions[session] = now
+    token_hash = hash_value(session)
+    _used_sessions[token_hash] = now
+    await mark_session_token(token_hash, user["id"], now)
     _appeal_locked[data["uid"]] = True
     # prune old used sessions
     stale_sessions = [token for token, ts in _used_sessions.items() if now - ts > SESSION_TTL_SECONDS * 2]

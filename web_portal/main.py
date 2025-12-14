@@ -663,7 +663,7 @@ def build_user_chip(session: Optional[dict]) -> str:
     if not session:
         return ""
     name = clean_display_name(session.get("display_name") or session.get("uname") or "")
-    avatar = session.get("avatar_url") or ""
+    avatar = session.get("avatar_url")
     if not avatar:
         try:
             avatar = f"https://cdn.discordapp.com/embed/avatars/{int(session.get('uid','0'))%5}.png"
@@ -989,6 +989,7 @@ async def home(request: Request, lang: Optional[str] = None):
     if not user_session:
         login_button = f'<a class="btn" href="{oauth_authorize_url(state)}">{strings["login"]}</a>'
     status_button = f'<a class="btn secondary" href="/status">{strings["status_cta"]}</a>'
+    review_button = f'<a class="btn" href="{oauth_authorize_url(state)}">{strings.get("review_ban","Review my ban")}</a>'
 
     content = f"""
       <div class="hero">
@@ -996,7 +997,7 @@ async def home(request: Request, lang: Optional[str] = None):
           <h1>{strings['hero_title']}</h1>
           <p class="lead">{strings['hero_sub']}</p>
           <div class="btn-row">
-            {login_button}
+            {login_button or review_button}
             {status_button}
           </div>
           <div class="btn-row" style="margin-top:10px;">
@@ -1009,17 +1010,9 @@ async def home(request: Request, lang: Optional[str] = None):
         <div class="card">
           <h2>{strings['appeal_cta']}</h2>
           <p class="muted">{strings['appeal_blurb']}</p>
-          {login_button or f'<a class="btn" href="{oauth_authorize_url(state)}">{strings["review_ban"]}</a>'}
+          {login_button or review_button}
           <div class="btn-row" style="margin-top:12px;">
             <a class="btn secondary" href="/status">{strings["status_cta"]}</a>
-          </div>
-        </div>
-        <div class="card">
-          <h2>Quick links</h2>
-          <p class="muted">Check your status or review policies.</p>
-          <div class="btn-row">
-            <a class="btn secondary" href="/status">{strings["status_cta"]}</a>
-            <a class="btn secondary" href="/tos">TOS</a>
             <a class="btn secondary" href="/privacy">Privacy</a>
           </div>
         </div>

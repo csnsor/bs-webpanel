@@ -1006,17 +1006,6 @@ async def home(request: Request, lang: Optional[str] = None):
           </div>
         </div>
       </div>
-      <div class="grid" style="margin-top:16px;">
-        <div class="card">
-          <h2>{strings['appeal_cta']}</h2>
-          <p class="muted">{strings['appeal_blurb']}</p>
-          {login_button or review_button}
-          <div class="btn-row" style="margin-top:12px;">
-            <a class="btn secondary" href="/status">{strings["status_cta"]}</a>
-            <a class="btn secondary" href="/privacy">Privacy</a>
-          </div>
-        </div>
-      </div>
     """
     response = HTMLResponse(render_page("BlockSpin Appeals", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
     response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
@@ -1033,6 +1022,7 @@ async def tos():
         <p class="muted"><strong>What is prohibited:</strong> ban evasion attempts, falsified evidence, harassment of staff, automated submissions, or sharing this portal for abuse.</p>
         <p class="muted"><strong>Enforcement:</strong> violations may result in denial of appeals, additional sanctions, or permanent denial of future appeals.</p>
         <p class="muted"><strong>Logging:</strong> we capture appeal content, account identifiers, IP/network metadata, and basic device info solely to secure the process.</p>
+        <div class="btn-row" style="margin-top:10px;"><a class="btn secondary" href="/">Back home</a></div>
       </div>
     """
     return HTMLResponse(render_page("Terms of Service", content), headers={"Cache-Control": "no-store"})
@@ -1047,6 +1037,7 @@ async def privacy():
         <p class="muted"><strong>How we use it:</strong> secure authentication, fraud prevention, moderation review, and auditability.</p>
         <p class="muted"><strong>Sharing:</strong> only with authorized BlockSpin staff or as required by law. We do not sell your data.</p>
         <p class="muted"><strong>Retention:</strong> data is kept for security and compliance; requests for removal can be directed to moderators subject to policy and legal obligations.</p>
+        <div class="btn-row" style="margin-top:10px;"><a class="btn secondary" href="/">Back home</a></div>
       </div>
     """
     return HTMLResponse(render_page("Privacy", content), headers={"Cache-Control": "no-store"})

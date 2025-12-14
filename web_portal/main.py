@@ -6,6 +6,8 @@ import time
 import html
 import copy
 import hashlib
+import discord
+from collections import deque, defaultdict
 from typing import Optional, Tuple, Dict, List
 
 import httpx
@@ -72,6 +74,13 @@ app.add_middleware(
 logging.basicConfig(level=logging.INFO)
 serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 
+@app.on_event("startup")
+async def startup_event():
+    if DISCORD_BOT_TOKEN:
+        asyncio.create_task(bot_client.start(DISCORD_BOT_TOKEN))
+    else:
+        logging.warning("DISCORD_BOT_TOKEN missing; bot client not started.")
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response: Response = await call_next(request)
@@ -105,6 +114,54 @@ REMOVE_FROM_DM_GUILD_AFTER_DM = os.getenv("REMOVE_FROM_DM_GUILD_AFTER_DM", "true
 CLEANUP_DM_INVITES = os.getenv("CLEANUP_DM_INVITES", "true").lower() == "true"
 PERSIST_SESSION_SECONDS = int(os.getenv("PERSIST_SESSION_SECONDS", str(7 * 24 * 3600)))  # keep users signed in
 SESSION_COOKIE_NAME = "bs_session"
+
+# --- Bot & Cache Setup ---
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
+intents.members = True
+intents.bans = True
+intents.guilds = True
+
+bot_client = discord.Client(intents=intents)
+_message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
+
+# --- Bot Events ---
+@bot_client.event
+async def on_ready():
+    logging.info("Bot connected as %s (%s)", bot_client.user, getattr(bot_client.user, "id", "unknown"))
+
+
+@bot_client.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    _message_buffer[str(message.author.id)].append(
+        {
+            "content": message.content,
+            "channel_id": str(message.channel.id),
+            "timestamp": str(message.created_at),
+            "id": str(message.id),
+        }
+    )
+
+
+@bot_client.event
+async def on_member_ban(guild, user):
+    user_id = str(user.id)
+    logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
+    cached_msgs = list(_message_buffer.get(user_id, []))
+    if cached_msgs and is_supabase_ready():
+        try:
+            await supabase_request(
+                "post",
+                "banned_user_context",
+                payload={"user_id": user_id, "messages": cached_msgs, "banned_at": int(time.time())},
+                prefer="resolution=merge-duplicates",
+            )
+            _message_buffer.pop(user_id, None)
+        except Exception as exc:
+            logging.warning("Failed to store banned context for %s: %s", user_id, exc)
 
 BASE_STYLES = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -281,8 +338,8 @@ textarea { resize: vertical; min-height: 140px; line-height: 1.5; }
 
 LANG_STRINGS = {
     "en": {
-        "hero_title": "Appeal your Discord ban with confidence.",
-        "hero_sub": "Verify your identity, see why you were banned, review recent chat context, and submit a single appeal.",
+        "hero_title": "Appeal your Discord ban.",
+        "hero_sub": "Login to Discord to see details, review recent context, and submit an appeal.",
         "login": "Login with Discord",
         "how_it_works": "How it works",
         "step_1": "Authenticate with Discord to confirm it's your account.",
@@ -633,14 +690,13 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     script_block = strings.get("script_block")
     script_nonce = strings.get("script_nonce") or secrets.token_urlsafe(12)
     avatar_fix_script = """
-    document.addEventListener("DOMContentLoaded", function() {
-        document.querySelectorAll('.user-chip img').forEach(img => {
-            img.onerror = function() {
-                this.onerror = null;
-                this.src = 'https://cdn.discordapp.com/embed/avatars/0.png';
-            };
-        });
-    });
+    window.addEventListener('error', function(e) {
+        if (e.target && e.target.tagName === 'IMG') {
+            if (e.target.src.includes('embed/avatars')) return;
+            e.target.src = 'https://cdn.discordapp.com/embed/avatars/0.png';
+            e.target.onerror = null;
+        }
+    }, true);
     """
     csp = (
         "default-src 'self'; "
@@ -957,33 +1013,25 @@ async def send_log_message(content: str):
 
 
 async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
-    """Best-effort cache of last messages for context."""
+    """Fetch ban context cached by the bot and stored in Supabase; delete after use."""
+    if not is_supabase_ready():
+        return []
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            resp = await client.get(
-                f"{DISCORD_API_BASE}/guilds/{MESSAGE_CACHE_GUILD_ID}/messages/search",
-                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                params={"author_id": user_id, "limit": limit},
-            )
-            if resp.status_code == 200:
-                data = resp.json() or {}
-                messages = data.get("messages") or []
-                # API returns nested lists; flatten and pick latest
-                flat = []
-                for group in messages:
-                    for msg in group:
-                        flat.append(
-                            {
-                                "id": msg.get("id"),
-                                "content": msg.get("content"),
-                                "channel_id": msg.get("channel_id"),
-                                "timestamp": msg.get("timestamp"),
-                            }
-                        )
-                return flat[:limit]
-            logging.warning("Message cache fetch failed status=%s body=%s", resp.status_code, resp.text)
+        recs = await supabase_request(
+            "get",
+            "banned_user_context",
+            params={"user_id": f"eq.{user_id}", "limit": 1},
+        )
+        if recs and recs[0].get("messages"):
+            messages = recs[0]["messages"][:limit]
+            # Clean up to avoid long retention
+            try:
+                await supabase_request("delete", "banned_user_context", params={"user_id": f"eq.{user_id}"})
+            except Exception as exc:
+                logging.warning("Failed to delete used context for %s: %s", user_id, exc)
+            return messages
     except Exception as exc:
-        logging.warning("Message cache exception: %s", exc)
+        logging.warning("Failed to fetch context for %s: %s", user_id, exc)
     return []
 
 
@@ -1486,7 +1534,7 @@ async def submit(
 
     asyncio.create_task(
         send_log_message(
-            f"[appeal_submitted] appeal={appeal_id} user={user['id']} ip_hash={hash_ip(ip)} lang={user_lang} ban_reason=\"{data.get('ban_reason','N/A')}\""
+            f"[appeal_submitted] appeal={appeal_id} user={user['id']} ip_hash={hash_ip(ip)} lang={user_lang} ban_reason=\"{data.get('ban_reason','N/A')}\" msg_ctx={len(message_cache or [])}"
         )
     )
 

@@ -622,7 +622,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>{html.escape(title)}</title>
         <link rel="icon" type="image/svg+xml" href="{favicon}">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https://cdn.discordapp.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://discord.com https://*.discord.com;">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://discord.com https://*.discord.com;">
         <style>{BASE_STYLES}</style>
       </head>
       <body>

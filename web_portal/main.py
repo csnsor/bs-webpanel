@@ -6,9 +6,13 @@ import time
 import html
 import copy
 import hashlib
-import discord
 from collections import deque, defaultdict
 from typing import Optional, Tuple, Dict, List
+
+try:
+    import discord  # type: ignore
+except ImportError:  # allow app to boot even if discord.py isn't installed
+    discord = None
 
 import httpx
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -76,10 +80,13 @@ serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 
 @app.on_event("startup")
 async def startup_event():
-    if DISCORD_BOT_TOKEN:
-        asyncio.create_task(bot_client.start(DISCORD_BOT_TOKEN))
-    else:
+    if not bot_client:
+        logging.warning("discord.py not available; bot client not started.")
+        return
+    if not DISCORD_BOT_TOKEN:
         logging.warning("DISCORD_BOT_TOKEN missing; bot client not started.")
+        return
+    asyncio.create_task(bot_client.start(DISCORD_BOT_TOKEN))
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
@@ -116,52 +123,52 @@ PERSIST_SESSION_SECONDS = int(os.getenv("PERSIST_SESSION_SECONDS", str(7 * 24 * 
 SESSION_COOKIE_NAME = "bs_session"
 
 # --- Bot & Cache Setup ---
-intents = discord.Intents.default()
-intents.messages = True
-intents.message_content = True
-intents.members = True
-intents.bans = True
-intents.guilds = True
-
-bot_client = discord.Client(intents=intents)
+bot_client = None
 _message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
 
-# --- Bot Events ---
-@bot_client.event
-async def on_ready():
-    logging.info("Bot connected as %s (%s)", bot_client.user, getattr(bot_client.user, "id", "unknown"))
+if discord:
+    intents = discord.Intents.default()
+    intents.messages = True
+    intents.message_content = True
+    intents.members = True
+    intents.bans = True
+    intents.guilds = True
 
+    bot_client = discord.Client(intents=intents)
 
-@bot_client.event
-async def on_message(message):
-    if message.author.bot:
-        return
-    _message_buffer[str(message.author.id)].append(
-        {
-            "content": message.content,
-            "channel_id": str(message.channel.id),
-            "timestamp": str(message.created_at),
-            "id": str(message.id),
-        }
-    )
+    @bot_client.event
+    async def on_ready():
+        logging.info("Bot connected as %s (%s)", bot_client.user, getattr(bot_client.user, "id", "unknown"))
 
+    @bot_client.event
+    async def on_message(message):
+        if message.author.bot:
+            return
+        _message_buffer[str(message.author.id)].append(
+            {
+                "content": message.content,
+                "channel_id": str(message.channel.id),
+                "timestamp": str(message.created_at),
+                "id": str(message.id),
+            }
+        )
 
-@bot_client.event
-async def on_member_ban(guild, user):
-    user_id = str(user.id)
-    logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
-    cached_msgs = list(_message_buffer.get(user_id, []))
-    if cached_msgs and is_supabase_ready():
-        try:
-            await supabase_request(
-                "post",
-                "banned_user_context",
-                payload={"user_id": user_id, "messages": cached_msgs, "banned_at": int(time.time())},
-                prefer="resolution=merge-duplicates",
-            )
-            _message_buffer.pop(user_id, None)
-        except Exception as exc:
-            logging.warning("Failed to store banned context for %s: %s", user_id, exc)
+    @bot_client.event
+    async def on_member_ban(guild, user):
+        user_id = str(user.id)
+        logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
+        cached_msgs = list(_message_buffer.get(user_id, []))
+        if cached_msgs and is_supabase_ready():
+            try:
+                await supabase_request(
+                    "post",
+                    "banned_user_context",
+                    payload={"user_id": user_id, "messages": cached_msgs, "banned_at": int(time.time())},
+                    prefer="resolution=merge-duplicates",
+                )
+                _message_buffer.pop(user_id, None)
+            except Exception as exc:
+                logging.warning("Failed to store banned context for %s: %s", user_id, exc)
 
 BASE_STYLES = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');

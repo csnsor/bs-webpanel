@@ -78,6 +78,9 @@ async def add_security_headers(request: Request, call_next):
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("Cross-Origin-Embedder-Policy", "require-corp")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
     return response
 
 # simple in-memory stores
@@ -89,6 +92,7 @@ _appeal_locked: Dict[str, bool] = {}  # {user_id: True if appealed already}
 _user_tokens: Dict[str, str] = {}  # {user_id: last OAuth access token}
 _processed_appeals: Dict[str, float] = {}  # {appeal_id: timestamp_processed}
 _declined_users: Dict[str, bool] = {}  # {user_id: True if appeal declined}
+_state_tokens: Dict[str, Tuple[str, float]] = {}  # {token: (ip, issued_at)}
 APPEAL_COOLDOWN_SECONDS = int(os.getenv("APPEAL_COOLDOWN_SECONDS", "300"))  # 5 minutes by default
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "900"))  # sessions expire after 15 minutes
 APPEAL_IP_MAX_REQUESTS = int(os.getenv("APPEAL_IP_MAX_REQUESTS", "8"))
@@ -284,6 +288,12 @@ textarea { resize: vertical; min-height: 140px; }
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   word-break: break-word;
 }
+.user-chip { display:flex; align-items:center; gap:10px; padding:6px 10px; border:1px solid var(--border); border-radius:12px; background: rgba(255,255,255,0.03); }
+.user-chip img { width:32px; height:32px; border-radius:50%; object-fit:cover; }
+.user-chip .name { font-weight:700; font-size:13px; color: var(--text); }
+.user-chip .actions { display:flex; gap:6px; }
+.user-chip a { color: var(--muted); font-size:12px; text-decoration:none; }
+.user-chip a:hover { color: var(--accent); }
 @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
 """
 
@@ -418,12 +428,34 @@ async def translate_text(text: str, target_lang: str = "en", source_lang: Option
     return text
 
 
+def clean_display_name(raw: str) -> str:
+    if not raw:
+        return ""
+    if raw.endswith("#0"):
+        return raw[:-2]
+    return raw
+
+
+def avatar_url_from_user(user: dict) -> str:
+    avatar = user.get("avatar")
+    user_id = user.get("id", "0")
+    if avatar:
+        ext = "gif" if avatar.startswith("a_") else "png"
+        return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar}.{ext}?size=128"
+    # default embed avatars rotated
+    try:
+        idx = int(user_id) % 5
+    except Exception:
+        idx = 0
+    return f"https://cdn.discordapp.com/embed/avatars/{idx}.png"
+
+
 def is_supabase_ready() -> bool:
     return bool(SUPABASE_URL and SUPABASE_KEY)
 
 
-def persist_user_session(response: Response, user_id: str, username: str):
-    token = serializer.dumps({"uid": user_id, "uname": username, "iat": time.time()})
+def persist_user_session(response: Response, user_id: str, username: str, display_name: Optional[str] = None, avatar_url: Optional[str] = None):
+    token = serializer.dumps({"uid": user_id, "uname": username, "iat": time.time(), "display_name": display_name or username, "avatar_url": avatar_url})
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
@@ -571,6 +603,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     strings = strings or LANG_STRINGS["en"]
     toggle_lang = "es" if lang != "es" else "en"
     toggle_label = strings.get("language_switch", "Switch language")
+    user_chip = strings.get("user_chip", "")
     return f"""
     <html>
       <head>
@@ -590,6 +623,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
                 <span>Discord Ban Appeals</span>
               </div>
             </div>
+            {user_chip}
           </div>
           {body_html}
           <div class="btn-row" style="justify-content:flex-end; gap:6px;">
@@ -623,6 +657,25 @@ def render_error(title: str, message: str, status_code: int = 400, lang: str = "
       </div>
     """
     return HTMLResponse(render_page(title, content, lang=lang), status_code=status_code, headers={"Cache-Control": "no-store"})
+
+
+def build_user_chip(session: Optional[dict]) -> str:
+    if not session:
+        return ""
+    name = clean_display_name(session.get("display_name") or session.get("uname") or "")
+    avatar = session.get("avatar_url") or ""
+    if not avatar:
+        try:
+            avatar = f"https://cdn.discordapp.com/embed/avatars/{int(session.get('uid','0'))%5}.png"
+        except Exception:
+            avatar = "https://cdn.discordapp.com/embed/avatars/0.png"
+    return f"""
+      <div class="user-chip">
+        <img src="{html.escape(avatar)}" alt="avatar" />
+        <div class="name">{html.escape(name)}</div>
+        <div class="actions"><a href="/logout">Logout</a></div>
+      </div>
+    """
 
 
 @app.exception_handler(HTTPException)
@@ -672,6 +725,32 @@ def get_client_ip(request: Request) -> str:
     if request.client:
         return request.client.host or "unknown"
     return "unknown"
+
+
+def issue_state_token(ip: str) -> str:
+    token = secrets.token_urlsafe(16)
+    now = time.time()
+    _state_tokens[token] = (ip, now)
+    # prune stale tokens (>15 minutes)
+    for t, (_, ts) in list(_state_tokens.items()):
+        if now - ts > 900:
+            _state_tokens.pop(t, None)
+    return token
+
+
+def validate_state_token(token: str, ip: str) -> bool:
+    if not token:
+        return False
+    record = _state_tokens.pop(token, None)
+    if not record:
+        return False
+    saved_ip, ts = record
+    if time.time() - ts > 900:
+        return False
+    # Allow slight IP variance if proxied; only check if both known
+    if saved_ip not in {"unknown", "", None} and ip not in {"unknown", "", None} and saved_ip != ip:
+        return False
+    return True
 
 
 def enforce_ip_rate_limit(ip: str):
@@ -897,21 +976,24 @@ async def post_appeal_embed(
 async def home(request: Request, lang: Optional[str] = None):
     current_lang = await detect_language(request, lang)
     strings = await get_strings(current_lang)
-    state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang})
     ip = get_client_ip(request)
-    ua = request.headers.get("User-Agent", "")
-    asyncio.create_task(send_log_message(f"[visit_home] ip={ip} ua={ua} lang={current_lang}"))
+    state_token = issue_state_token(ip)
+    state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
+    asyncio.create_task(send_log_message(f"[visit_home] ip={ip} lang={current_lang}"))
     user_session = read_user_session(request)
+    user_chip = build_user_chip(user_session)
+    strings = dict(strings)
+    strings["user_chip"] = user_chip
     history_html = ""
     if user_session and is_supabase_ready():
         history = await fetch_appeal_history(user_session["uid"])
         history_html = render_history_items(history)
     elif user_session:
-        history_html = "<div class='muted'>History will appear after Supabase is configured.</div>"
+        history_html = "<div class='muted'></div>"
 
     status_block = ""
     if user_session:
-        uname = html.escape(user_session.get("uname", "Your account"))
+        uname = html.escape(clean_display_name(user_session.get("display_name") or user_session.get("uname", "Your account")))
         status_block = f"""
           <div class="card">
             <h2>{strings['welcome_back']}, {uname}</h2>
@@ -948,7 +1030,6 @@ async def home(request: Request, lang: Optional[str] = None):
     content = f"""
       <div class="hero">
         <div>
-          <div class="pill">BlockSpin</div>
           <h1>{strings['hero_title']}</h1>
           <p class="lead">{strings['hero_sub']}</p>
           <div class="btn-row">
@@ -959,6 +1040,10 @@ async def home(request: Request, lang: Optional[str] = None):
             <div class="step">{strings['step_1']}</div>
             <div class="step">{strings['step_2']}</div>
             <div class="step">{strings['step_3']}</div>
+          </div>
+          <div class="btn-row" style="margin-top:10px;">
+            <a class="btn secondary" href="/tos">Terms of Service</a>
+            <a class="btn secondary" href="/privacy">Privacy</a>
           </div>
         </div>
       </div>
@@ -983,8 +1068,11 @@ async def tos():
     content = """
       <div class="card">
         <h2>Terms of Service</h2>
-        <p class="muted">BlockSpin appeals require truthful information. Automated abuse, evasion attempts, and falsified evidence are prohibited. Decisions by moderators are final unless otherwise stated.</p>
-        <p class="muted">By using this portal you consent to basic logging for security, including IP, device, and account identifiers.</p>
+        <p class="muted">BlockSpin appeals are a formal process. By using this portal you agree to provide accurate information and accept that moderators may make irreversible decisions.</p>
+        <p class="muted"><strong>What you must do:</strong> submit truthful details, include relevant context, and avoid duplicate or spam appeals.</p>
+        <p class="muted"><strong>What is prohibited:</strong> ban evasion attempts, falsified evidence, harassment of staff, automated submissions, or sharing this portal for abuse.</p>
+        <p class="muted"><strong>Enforcement:</strong> violations may result in denial of appeals, additional sanctions, or permanent denial of future appeals.</p>
+        <p class="muted"><strong>Logging:</strong> we capture appeal content, account identifiers, IP/network metadata, and basic device info solely to secure the process.</p>
       </div>
     """
     return HTMLResponse(render_page("Terms of Service", content), headers={"Cache-Control": "no-store"})
@@ -995,8 +1083,10 @@ async def privacy():
     content = """
       <div class="card">
         <h2>Privacy</h2>
-        <p class="muted">We record appeal details, IP/network metadata, and basic device info to prevent abuse and support moderation. Data is shared only with BlockSpin staff for security and compliance.</p>
-        <p class="muted">By continuing, you agree to this collection for security, fraud prevention, and audit purposes.</p>
+        <p class="muted"><strong>Data we collect:</strong> appeal submissions, account identifiers, IP, approximate region, basic device/user agent, and limited message context to verify events.</p>
+        <p class="muted"><strong>How we use it:</strong> secure authentication, fraud prevention, moderation review, and auditability.</p>
+        <p class="muted"><strong>Sharing:</strong> only with authorized BlockSpin staff or as required by law. We do not sell your data.</p>
+        <p class="muted"><strong>Retention:</strong> data is kept for security and compliance; requests for removal can be directed to moderators subject to policy and legal obligations.</p>
       </div>
     """
     return HTMLResponse(render_page("Privacy", content), headers={"Cache-Control": "no-store"})
@@ -1007,9 +1097,10 @@ async def status_page(request: Request, lang: Optional[str] = None):
     current_lang = await detect_language(request, lang)
     strings = await get_strings(current_lang)
     ip = get_client_ip(request)
-    ua = request.headers.get("User-Agent", "")
-    asyncio.create_task(send_log_message(f"[visit_status] ip={ip} ua={ua} lang={current_lang}"))
+    asyncio.create_task(send_log_message(f"[visit_status] ip={ip} lang={current_lang}"))
     session = read_user_session(request)
+    strings = dict(strings)
+    strings["user_chip"] = build_user_chip(session)
     if not session:
         login_url = oauth_authorize_url(serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang}))
         content = f"""
@@ -1028,12 +1119,12 @@ async def status_page(request: Request, lang: Optional[str] = None):
         history = await fetch_appeal_history(session["uid"], limit=10)
         history_html = render_history_items(history)
     else:
-        history_html = "<div class='muted'>History will appear after Supabase is configured.</div>"
+        history_html = "<div class='muted'></div>"
 
     content = f"""
       <div class="card">
         <div class="pill">BlockSpin | Appeal status</div>
-        <h1 style="margin:12px 0 8px;">Appeal history for {html.escape(session.get('uname','you'))}</h1>
+        <h1 style="margin:12px 0 8px;">Appeal history for {html.escape(clean_display_name(session.get('display_name') or session.get('uname','you')))}</h1>
         <p class="muted">You are signed in. We keep this session encrypted for {PERSIST_SESSION_SECONDS // 86400} days.</p>
         {history_html}
         <div class="footer">Need to update details? Start a new session from the home page.</div>
@@ -1041,6 +1132,13 @@ async def status_page(request: Request, lang: Optional[str] = None):
     """
     resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
     resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+    return resp
+
+
+@app.get("/logout")
+async def logout():
+    resp = RedirectResponse("/")
+    resp.delete_cookie(SESSION_COOKIE_NAME)
     return resp
 
 
@@ -1058,14 +1156,18 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     user = await fetch_discord_user(token["access_token"])
     _user_tokens[user["id"]] = token["access_token"]
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
+    display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
+    avatar_url = avatar_url_from_user(user)
 
     # Log authorization with network details
     ip = get_client_ip(request)
     forwarded_for = request.headers.get("X-Forwarded-For", "")
-    ua = request.headers.get("User-Agent", "")
+    state_id = state_data.get("state_id")
+    if not validate_state_token(state_id, ip):
+        raise HTTPException(status_code=400, detail="Invalid or replayed state")
     asyncio.create_task(
         send_log_message(
-            f"[auth] user={user['id']} uname={uname_label} ip={ip} fwd={forwarded_for} ua={ua} lang={current_lang}"
+            f"[auth] user={user['id']} ip={ip} lang={current_lang}"
         )
     )
 
@@ -1074,11 +1176,14 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         history = await fetch_appeal_history(user["id"])
         history_html = render_history_items(history)
     else:
-        history_html = "<div class='muted'>History will appear after Supabase is configured.</div>"
+        history_html = "<div class='muted'></div>"
+
+    strings = dict(strings)
+    strings["user_chip"] = build_user_chip({"display_name": display_name, "avatar_url": avatar_url, "uid": user["id"], "uname": uname_label})
 
     def respond(body_html: str, title: str, status_code: int = 200) -> HTMLResponse:
         resp = HTMLResponse(render_page(title, body_html, lang=current_lang, strings=strings), status_code=status_code, headers={"Cache-Control": "no-store"})
-        persist_user_session(resp, user["id"], uname_label)
+        persist_user_session(resp, user["id"], uname_label, display_name=display_name, avatar_url=avatar_url)
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
 
@@ -1233,7 +1338,7 @@ async def submit(
     enforce_ip_rate_limit(ip)
     asyncio.create_task(
         send_log_message(
-            f"[appeal_attempt] user={data.get('uid')} ip={ip} fwd={forwarded_for} ua={user_agent}"
+            f"[appeal_attempt] user={data.get('uid')} ip={ip}"
         )
     )
 
@@ -1276,7 +1381,7 @@ async def submit(
 
     asyncio.create_task(
         send_log_message(
-            f"[appeal_submitted] appeal={appeal_id} user={user['id']} lang={user_lang} ip={ip} fwd={forwarded_for} ua={user_agent}"
+            f"[appeal_submitted] appeal={appeal_id} user={user['id']} ip={ip} lang={user_lang} ban_reason=\"{data.get('ban_reason','N/A')}\""
         )
     )
 

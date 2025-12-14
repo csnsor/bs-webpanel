@@ -31,11 +31,14 @@ TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "0")
 MODERATOR_ROLE_ID = int(os.getenv("MODERATOR_ROLE_ID", "1353068159346671707"))
 APPEAL_CHANNEL_ID = int(os.getenv("APPEAL_CHANNEL_ID", "1352973388334764112"))
 APPEAL_LOG_CHANNEL_ID = int(os.getenv("APPEAL_LOG_CHANNEL_ID", "1353445286457901106"))
+AUTH_LOG_CHANNEL_ID = int(os.getenv("AUTH_LOG_CHANNEL_ID", "1449822248490762421"))
 SECRET_KEY = os.getenv("PORTAL_SECRET_KEY") or secrets.token_hex(16)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_TABLE = "discord-appeals"
 INVITE_LINK = "https://discord.gg/blockspin"
+MESSAGE_CACHE_GUILD_ID = os.getenv("MESSAGE_CACHE_GUILD_ID", "1065973360040890418")
+LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
 
 OAUTH_SCOPES = "identify guilds.join"
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -284,8 +287,114 @@ textarea { resize: vertical; min-height: 140px; }
 @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
 """
 
+LANG_STRINGS = {
+    "en": {
+        "hero_title": "Appeal your Discord ban with confidence.",
+        "hero_sub": "Verify your identity, see why you were banned, review recent chat context, and submit a single appeal.",
+        "login": "Login with Discord",
+        "how_it_works": "How it works",
+        "step_1": "Authenticate with Discord to confirm it's your account.",
+        "step_2": "Review ban details, share evidence, and submit securely.",
+        "step_3": "Stay signed in to monitor your appeal status.",
+        "appeal_cta": "Appeal your ban",
+        "appeal_blurb": "Submit one appeal within the allowed window. We'll keep you signed in to track the decision.",
+        "status_cta": "View status",
+        "stay_signed_in": "Stay signed in",
+        "stay_signed_in_blurb": "We keep your session secured so you can check decisions anytime.",
+        "history_title": "Appeal history",
+        "history_blurb": "Logged with Supabase for transparency and security.",
+        "welcome_back": "Welcome back",
+        "review_ban": "Review my ban",
+        "start_now": "Start now",
+        "error_retry": "Retry",
+        "error_home": "Go Home",
+        "ban_details": "Ban details",
+        "messages_header": "Recent messages (cached)",
+        "no_messages": "No cached messages available.",
+        "language_switch": "Switch language",
+    },
+    "es": {
+        "hero_title": "Apela tu expulsión de Discord con confianza.",
+        "hero_sub": "Verifica tu identidad, revisa por qué fuiste expulsado, mira el contexto reciente y envía una única apelación.",
+        "login": "Iniciar sesión con Discord",
+        "how_it_works": "Cómo funciona",
+        "step_1": "Autentícate con Discord para confirmar que es tu cuenta.",
+        "step_2": "Revisa los detalles del baneo, comparte evidencia y envía tu apelación de forma segura.",
+        "step_3": "Mantente conectado para seguir el estado de tu apelación.",
+        "appeal_cta": "Apelar tu expulsión",
+        "appeal_blurb": "Envía una apelación dentro del periodo permitido. Mantendremos tu sesión para seguir la decisión.",
+        "status_cta": "Ver estado",
+        "stay_signed_in": "Mantente conectado",
+        "stay_signed_in_blurb": "Guardamos tu sesión de forma segura para que revises decisiones en cualquier momento.",
+        "history_title": "Historial de apelaciones",
+        "history_blurb": "Registrado con Supabase para transparencia y seguridad.",
+        "welcome_back": "Bienvenido de nuevo",
+        "review_ban": "Revisar mi expulsión",
+        "start_now": "Comenzar",
+        "error_retry": "Reintentar",
+        "error_home": "Ir al inicio",
+        "ban_details": "Detalles del baneo",
+        "messages_header": "Mensajes recientes (cacheados)",
+        "no_messages": "No hay mensajes cacheados.",
+        "language_switch": "Cambiar idioma",
+    },
+}
+
 
 # --- Helpers ---
+def normalize_language(lang: Optional[str]) -> str:
+    if not lang:
+        return "en"
+    lang = lang.lower()
+    if lang.startswith("es"):
+        return "es"
+    return "en"
+
+
+def get_strings(lang: str) -> Dict[str, str]:
+    lang = normalize_language(lang)
+    base = LANG_STRINGS["en"]
+    if lang == "en":
+        return base
+    return {**base, **LANG_STRINGS.get(lang, {})}
+
+
+def detect_language(request: Request, lang_param: Optional[str] = None) -> str:
+    if lang_param:
+        return normalize_language(lang_param)
+    cookie_lang = request.cookies.get("lang")
+    if cookie_lang:
+        return normalize_language(cookie_lang)
+    accept = request.headers.get("accept-language", "")
+    if accept:
+        return normalize_language(accept.split(",")[0].strip())
+    return "en"
+
+
+async def translate_text(text: str, target_lang: str = "en", source_lang: Optional[str] = None) -> str:
+    if not text or normalize_language(target_lang) == "en" and normalize_language(source_lang) == "en":
+        return text
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.post(
+                LIBRETRANSLATE_URL,
+                json={
+                    "q": text,
+                    "source": source_lang or "auto",
+                    "target": target_lang,
+                    "format": "text",
+                },
+                headers={"Content-Type": "application/json"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("translatedText") or text
+            logging.warning("Translation failed status=%s body=%s", resp.status_code, resp.text)
+    except Exception as exc:
+        logging.warning("Translation exception: %s", exc)
+    return text
+
+
 def is_supabase_ready() -> bool:
     return bool(SUPABASE_URL and SUPABASE_KEY)
 
@@ -342,6 +451,9 @@ async def log_appeal_to_supabase(
     ban_reason: str,
     ban_evidence: str,
     appeal_reason: str,
+    appeal_reason_original: str,
+    user_lang: str,
+    message_cache: Optional[List[dict]],
     ip: str,
     forwarded_for: str,
     user_agent: str,
@@ -354,10 +466,13 @@ async def log_appeal_to_supabase(
         "ban_reason": ban_reason,
         "ban_evidence": ban_evidence,
         "appeal_reason": appeal_reason,
+        "appeal_reason_original": appeal_reason_original,
+        "user_lang": user_lang,
         "status": "pending",
         "ip": ip,
         "forwarded_for": forwarded_for,
         "user_agent": user_agent,
+        "message_cache": message_cache,
     }
     await supabase_request("post", SUPABASE_TABLE, payload=payload)
 
@@ -388,6 +503,17 @@ async def fetch_appeal_history(user_id: str, limit: int = 6) -> List[dict]:
     return records or []
 
 
+async def fetch_appeal_record(appeal_id: str) -> Optional[dict]:
+    records = await supabase_request(
+        "get",
+        SUPABASE_TABLE,
+        params={"appeal_id": f"eq.{appeal_id}", "limit": 1},
+    )
+    if records:
+        return records[0]
+    return None
+
+
 def render_history_items(history: List[dict]) -> str:
     if not history:
         return "<div class='muted'>No recorded appeals yet. Once you submit, your history will appear here.</div>"
@@ -416,8 +542,11 @@ def render_history_items(history: List[dict]) -> str:
     return f"<ul class='history-list'>{''.join(items)}</ul>"
 
 
-def render_page(title: str, body_html: str) -> str:
+def render_page(title: str, body_html: str, lang: str = "en") -> str:
+    lang = normalize_language(lang)
     year = time.gmtime().tm_year
+    toggle_lang = "es" if lang != "es" else "en"
+    toggle_label = get_strings(lang)["language_switch"]
     return f"""
     <html>
       <head>
@@ -439,6 +568,9 @@ def render_page(title: str, body_html: str) -> str:
             </div>
           </div>
           {body_html}
+          <div class="btn-row" style="justify-content:flex-end; gap:6px;">
+            <a class="btn secondary" style="padding:8px 12px;font-size:12px;" href="?lang={toggle_lang}">{toggle_label}</a>
+          </div>
           <div class="footer">© {year} BlockSpin • Secure Appeals</div>
         </div>
       </body>
@@ -450,9 +582,10 @@ def wants_html(request: Request) -> bool:
     return "text/html" in accept or "*/*" in accept
 
 
-def render_error(title: str, message: str, status_code: int = 400) -> HTMLResponse:
+def render_error(title: str, message: str, status_code: int = 400, lang: str = "en") -> HTMLResponse:
     safe_title = html.escape(title)
     safe_msg = html.escape(message)
+    strings = get_strings(lang)
     content = f"""
       <div class="card" style="text-align:center;">
         <div class="icon-error">!</div>
@@ -460,26 +593,28 @@ def render_error(title: str, message: str, status_code: int = 400) -> HTMLRespon
         <p>{safe_msg}</p>
         <div class="error-box">{safe_msg}</div>
         <div class="btn-row" style="justify-content:center;">
-          <a class="btn" href="/" aria-label="Back home">Go Home</a>
-          <a class="btn secondary" href="javascript:location.reload();" aria-label="Retry action">Retry</a>
+          <a class="btn" href="/" aria-label="Back home">{strings['error_home']}</a>
+          <a class="btn secondary" href="javascript:location.reload();" aria-label="Retry action">{strings['error_retry']}</a>
         </div>
       </div>
     """
-    return HTMLResponse(render_page(title, content), status_code=status_code, headers={"Cache-Control": "no-store"})
+    return HTMLResponse(render_page(title, content, lang=lang), status_code=status_code, headers={"Cache-Control": "no-store"})
 
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     if wants_html(request):
         msg = exc.detail if isinstance(exc.detail, str) else "Something went wrong."
-        return render_error("Request failed", msg, exc.status_code)
+        lang = detect_language(request)
+        return render_error("Request failed", msg, exc.status_code, lang=lang)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     if wants_html(request):
-        return render_error("Invalid input", "Please check the form and try again.", 422)
+        lang = detect_language(request)
+        return render_error("Invalid input", "Please check the form and try again.", 422, lang=lang)
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
@@ -487,7 +622,8 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.exception("Unhandled error: %s", exc)
     if wants_html(request):
-        return render_error("Server error", "Unexpected error. Please try again.", 500)
+        lang = detect_language(request)
+        return render_error("Server error", "Unexpected error. Please try again.", 500, lang=lang)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
@@ -630,6 +766,59 @@ async def remove_from_target_guild(user_id: str) -> Optional[int]:
         return resp.status_code
 
 
+async def send_log_message(content: str):
+    """Send a plaintext log line to the auth/ops channel."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{DISCORD_API_BASE}/channels/{AUTH_LOG_CHANNEL_ID}/messages",
+                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                json={"content": content},
+            )
+            if resp.status_code == 429:
+                retry = float(resp.headers.get("Retry-After", "1"))
+                await asyncio.sleep(min(retry, 5.0))
+                return await client.post(
+                    f"{DISCORD_API_BASE}/channels/{AUTH_LOG_CHANNEL_ID}/messages",
+                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                    json={"content": content},
+                )
+            resp.raise_for_status()
+    except Exception as exc:
+        logging.warning("Log post failed: %s", exc)
+
+
+async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
+    """Best-effort cache of last messages for context."""
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.get(
+                f"{DISCORD_API_BASE}/guilds/{MESSAGE_CACHE_GUILD_ID}/messages/search",
+                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                params={"author_id": user_id, "limit": limit},
+            )
+            if resp.status_code == 200:
+                data = resp.json() or {}
+                messages = data.get("messages") or []
+                # API returns nested lists; flatten and pick latest
+                flat = []
+                for group in messages:
+                    for msg in group:
+                        flat.append(
+                            {
+                                "id": msg.get("id"),
+                                "content": msg.get("content"),
+                                "channel_id": msg.get("channel_id"),
+                                "timestamp": msg.get("timestamp"),
+                            }
+                        )
+                return flat[:limit]
+            logging.warning("Message cache fetch failed status=%s body=%s", resp.status_code, resp.text)
+    except Exception as exc:
+        logging.warning("Message cache exception: %s", exc)
+    return []
+
+
 async def post_appeal_embed(
     appeal_id: str,
     user: dict,
@@ -678,8 +867,10 @@ async def post_appeal_embed(
 
 # --- Routes ---
 @app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
-    state = serializer.dumps({"nonce": secrets.token_urlsafe(8)})
+async def home(request: Request, lang: Optional[str] = None):
+    current_lang = detect_language(request, lang)
+    strings = get_strings(current_lang)
+    state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang})
     user_session = read_user_session(request)
     history_html = ""
     if user_session and is_supabase_ready():
@@ -693,87 +884,87 @@ async def home(request: Request):
         uname = html.escape(user_session.get("uname", "Your account"))
         status_block = f"""
           <div class="card">
-            <h2>Welcome back, {uname}</h2>
-            <p class="muted">Track your BlockSpin ban appeals in one place. If you submit a new one, it will show below.</p>
+            <h2>{strings['welcome_back']}, {uname}</h2>
+            <p class="muted">{strings['appeal_blurb']}</p>
             <div class="btn-row">
-              <a class="btn" href="{oauth_authorize_url(state)}">Review my ban</a>
-              <a class="btn secondary" href="/status">View live status</a>
+              <a class="btn secondary" href="/status">{strings['status_cta']}</a>
+              <a class="btn" href="{oauth_authorize_url(state)}">{strings['review_ban']}</a>
             </div>
           </div>
         """
 
     history_block = f"""
       <div class="card">
-        <h2>Appeal history</h2>
-        <p class="muted">Logged with Supabase for transparency and security.</p>
+        <h2>{strings['history_title']}</h2>
+        <p class="muted">{strings['history_blurb']}</p>
         {history_html}
       </div>
     """
-    fallback_status = f"""
-      <div class="card">
-        <h2>Stay signed in</h2>
-        <p class="muted">Sign in once and we keep your session secured so you can check decisions anytime.</p>
-        <div class="btn-row">
-          <a class="btn" href="{oauth_authorize_url(state)}">Start now</a>
-        </div>
-      </div>
-    """
     if not status_block:
-        status_block = fallback_status
+        status_block = f"""
+          <div class="card">
+            <h2>{strings['stay_signed_in']}</h2>
+            <p class="muted">{strings['stay_signed_in_blurb']}</p>
+            <div class="btn-row">
+              <a class="btn" href="{oauth_authorize_url(state)}">{strings['start_now']}</a>
+            </div>
+          </div>
+        """
+
+    login_button = ""
+    if not user_session:
+        login_button = f'<a class="btn" href="{oauth_authorize_url(state)}">{strings["login"]}</a>'
 
     content = f"""
       <div class="hero">
         <div>
-          <div class="pill">BlockSpin Trust & Safety</div>
-          <h1>Appeal, review, and monitor bans with confidence.</h1>
-          <p class="lead">Modern portal for BlockSpin members to verify bans, submit one-time appeals, and stay updated with real-time status tracking.</p>
+          <div class="pill">BlockSpin</div>
+          <h1>{strings['hero_title']}</h1>
+          <p class="lead">{strings['hero_sub']}</p>
           <div class="btn-row">
-            <a class="btn" href="{oauth_authorize_url(state)}">Login with Discord</a>
-            <a class="btn secondary" href="#how-it-works">How it works</a>
+            {login_button}
+            <a class="btn secondary" href="#how-it-works">{strings['how_it_works']}</a>
           </div>
           <div class="timeline" id="how-it-works">
-            <div class="step">Authenticate with Discord to verify you are appealing your own account.</div>
-            <div class="step">Review ban details, share evidence, and submit a secure appeal.</div>
-            <div class="step">Stay signed in to monitor decisions and download your history.</div>
-          </div>
-        </div>
-        <div class="card">
-          <h2>Why BlockSpin?</h2>
-          <p class="muted">We pair Discord identity with server-side Supabase logging to keep appeals tamper-resistant.</p>
-          <div class="features">
-            <div class="feature"><strong>Live status</strong><span class="muted">Appeal outcomes mirrored to you and moderators instantly.</span></div>
-            <div class="feature"><strong>Secure by default</strong><span class="muted">Strict rate limits, signed sessions, and audit trails.</span></div>
-            <div class="feature"><strong>History</strong><span class="muted">See every appeal you have filed, including decisions.</span></div>
+            <div class="step">{strings['step_1']}</div>
+            <div class="step">{strings['step_2']}</div>
+            <div class="step">{strings['step_3']}</div>
           </div>
         </div>
       </div>
       <div class="grid" style="margin-top:16px;">
         <div class="card">
-          <h2>Appeal your ban</h2>
-          <p class="muted">Sign in with your Discord account to view ban details and submit one appeal within 7 days.</p>
-          <a class="btn" href="{oauth_authorize_url(state)}">Login with Discord</a>
-          <div class="callout" style="margin-top:12px;">Built for BlockSpin. Keep your account secure and your appeal private.</div>
+          <h2>{strings['appeal_cta']}</h2>
+          <p class="muted">{strings['appeal_blurb']}</p>
+          {login_button or f'<a class="btn secondary" href="/status">{strings["status_cta"]}</a>'}
+          <div class="callout" style="margin-top:12px;">BlockSpin • Secure moderation</div>
         </div>
         {status_block}
         {history_block}
       </div>
     """
-    return HTMLResponse(render_page("BlockSpin Appeals", content), headers={"Cache-Control": "no-store"})
+    response = HTMLResponse(render_page("BlockSpin Appeals", content, lang=current_lang), headers={"Cache-Control": "no-store"})
+    response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+    return response
 
 
 @app.get("/status", response_class=HTMLResponse)
-async def status_page(request: Request):
+async def status_page(request: Request, lang: Optional[str] = None):
+    current_lang = detect_language(request, lang)
+    strings = get_strings(current_lang)
     session = read_user_session(request)
     if not session:
-        login_url = oauth_authorize_url(serializer.dumps({"nonce": secrets.token_urlsafe(8)}))
+        login_url = oauth_authorize_url(serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang}))
         content = f"""
           <div class="card status danger">
             <h1 style="margin-bottom:10px;">Sign in required</h1>
             <p class="muted">Sign in to view your BlockSpin appeal history and live status.</p>
-            <a class="btn" href="{login_url}">Login with Discord</a>
+            <a class="btn" href="{login_url}">{strings['login']}</a>
           </div>
         """
-        return HTMLResponse(render_page("Appeal status", content), status_code=401, headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang), status_code=401, headers={"Cache-Control": "no-store"})
+        resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+        return resp
 
     history_html = ""
     if is_supabase_ready():
@@ -791,20 +982,35 @@ async def status_page(request: Request):
         <div class="footer">Need to update details? Start a new session from the home page.</div>
       </div>
     """
-    return HTMLResponse(render_page("Appeal status", content), headers={"Cache-Control": "no-store"})
+    resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang), headers={"Cache-Control": "no-store"})
+    resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+    return resp
 
 
 @app.get("/callback")
-async def callback(request: Request, code: str, state: str):
+async def callback(request: Request, code: str, state: str, lang: Optional[str] = None):
     try:
-        serializer.loads(state)
+        state_data = serializer.loads(state)
     except BadSignature:
         raise HTTPException(status_code=400, detail="Invalid state")
+
+    current_lang = normalize_language(lang or state_data.get("lang"))
+    strings = get_strings(current_lang)
 
     token = await exchange_code_for_token(code)
     user = await fetch_discord_user(token["access_token"])
     _user_tokens[user["id"]] = token["access_token"]
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
+
+    # Log authorization with network details
+    ip = get_client_ip(request)
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    ua = request.headers.get("User-Agent", "")
+    asyncio.create_task(
+        send_log_message(
+            f"[auth] user={user['id']} uname={uname_label} ip={ip} fwd={forwarded_for} ua={ua}"
+        )
+    )
 
     history_html = ""
     if is_supabase_ready():
@@ -814,8 +1020,9 @@ async def callback(request: Request, code: str, state: str):
         history_html = "<div class='muted'>History will appear after Supabase is configured.</div>"
 
     def respond(body_html: str, title: str, status_code: int = 200) -> HTMLResponse:
-        resp = HTMLResponse(render_page(title, body_html), status_code=status_code, headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse(render_page(title, body_html, lang=current_lang), status_code=status_code, headers={"Cache-Control": "no-store"})
         persist_user_session(resp, user["id"], uname_label)
+        resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
 
     # Block re-entry for declined users up front.
@@ -880,11 +1087,23 @@ async def callback(request: Request, code: str, state: str):
             "ban_reason": ban.get("reason", "No reason provided."),
             "iat": time.time(),
             "ban_first_seen": first_seen,
+            "lang": current_lang,
+            "message_cache": message_cache,
         }
     )
     uname = html.escape(f"{user['username']}#{user.get('discriminator','0')}")
     ban_reason = html.escape(ban.get("reason", "No reason provided."))
     cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
+    message_cache = await fetch_message_cache(user["id"])
+    message_cache_html = ""
+    if message_cache:
+        rows = "".join(
+            f"<div class='status'><strong>{html.escape(m.get('timestamp',''))}</strong><br/>{html.escape(m.get('content') or '')}</div>"
+            for m in message_cache
+        )
+        message_cache_html = rows
+    else:
+        message_cache_html = f"<div class='muted'>{strings['no_messages']}</div>"
     content = f"""
       <div class="grid-2">
         <div class="form-card">
@@ -906,10 +1125,14 @@ async def callback(request: Request, code: str, state: str):
           <div class="callout" style="margin-top:10px;">We keep you signed in so you can check your appeal status without re-authenticating.</div>
         </div>
         <div class="card">
-          <h2>Ban details</h2>
+          <h2>{strings['ban_details']}</h2>
           <p class="muted"><strong>User:</strong> {uname}</p>
           <p class="muted"><strong>Ban reason:</strong> {ban_reason}</p>
           <p class="muted">Cooldown between submissions: {cooldown_minutes} minutes. Appeals expire 7 days after the ban.</p>
+          <div style="margin-top:12px;">
+            <h3 style="margin:0 0 6px;">{strings['messages_header']}</h3>
+            {message_cache_html}
+          </div>
           <div style="margin-top:12px;">
             <h3 style="margin:0 0 6px;">Your history</h3>
             {history_html}
@@ -960,12 +1183,17 @@ async def submit(
 
     appeal_id = str(uuid.uuid4())[:8]
     user = {"id": data["uid"], "username": data["uname"], "discriminator": "0"}
+    user_lang = data.get("lang", "en")
+    appeal_reason_en = await translate_text(appeal_reason, target_lang="en", source_lang=user_lang)
+    reason_for_embed = appeal_reason_en
+    if normalize_language(user_lang) != "en":
+        reason_for_embed += f"\n(Original {user_lang}: {appeal_reason})"
     await post_appeal_embed(
         appeal_id=appeal_id,
         user=user,
         ban_reason=data.get("ban_reason", "No reason provided."),
         ban_evidence=evidence or "No evidence provided.",
-        appeal_reason=appeal_reason,
+        appeal_reason=reason_for_embed,
     )
 
     # Persist audit trail to Supabase (best effort)
@@ -974,10 +1202,19 @@ async def submit(
         user,
         data.get("ban_reason", "No reason provided."),
         evidence or "No evidence provided.",
+        appeal_reason_en,
         appeal_reason,
+        user_lang,
+        data.get("message_cache"),
         ip,
         forwarded_for,
         user_agent,
+    )
+
+    asyncio.create_task(
+        send_log_message(
+            f"[appeal_submitted] appeal={appeal_id} user={user['id']} lang={user_lang} ip={ip} fwd={forwarded_for} ua={user_agent}"
+        )
     )
 
     _used_sessions[session] = now
@@ -996,7 +1233,7 @@ async def submit(
       </div>
     """
 
-    return HTMLResponse(render_page("Appeal submitted", success), status_code=200, headers={"Cache-Control": "no-store"})
+    return HTMLResponse(render_page("Appeal submitted", success, lang=user_lang), status_code=200, headers={"Cache-Control": "no-store"})
 
 
 # --- Discord interactions (button handling) ---
@@ -1188,6 +1425,9 @@ async def interactions(request: Request):
                     return
                 _processed_appeals[appeal_id] = time.time()
 
+                appeal_record = await fetch_appeal_record(appeal_id)
+                user_lang = normalize_language((appeal_record or {}).get("user_lang", "en"))
+
                 unban_status = None
                 async with httpx.AsyncClient() as client:
                     unban_resp = await client.delete(
@@ -1199,14 +1439,20 @@ async def interactions(request: Request):
                 removal_status = await remove_from_target_guild(user_id)
 
                 # DM user (best effort)
+                accept_desc_en = (
+                    "Your appeal has been reviewed and accepted. You have been unbanned.\n"
+                    f"Use this invite to rejoin BlockSpin: {INVITE_LINK}"
+                )
+                accept_desc = (
+                    await translate_text(accept_desc_en, target_lang=user_lang, source_lang="en")
+                    if user_lang != "en"
+                    else accept_desc_en
+                )
                 dm_delivered = await dm_user(
                     user_id,
                     {
                         "title": "Appeal Accepted",
-                        "description": (
-                            "Your appeal has been reviewed and accepted. You have been unbanned.\n"
-                            f"Use this invite to rejoin BlockSpin: {INVITE_LINK}"
-                        ),
+                        "description": accept_desc,
                         "color": 0x2ECC71,
                     },
                 )
@@ -1248,16 +1494,25 @@ async def interactions(request: Request):
                 _declined_users[user_id] = True
                 _appeal_locked[user_id] = True
 
+                appeal_record = await fetch_appeal_record(appeal_id)
+                user_lang = normalize_language((appeal_record or {}).get("user_lang", "en"))
+
                 removal_status = await remove_from_target_guild(user_id)
 
+                decline_desc_en = (
+                    "Your appeal has been reviewed and declined. Further appeals are blocked for this ban.\n"
+                    "You have been removed from the guild for security."
+                )
+                decline_desc = (
+                    await translate_text(decline_desc_en, target_lang=user_lang, source_lang="en")
+                    if user_lang != "en"
+                    else decline_desc_en
+                )
                 dm_delivered = await dm_user(
                     user_id,
                     {
                         "title": "Appeal Declined",
-                        "description": (
-                            "Your appeal has been reviewed and declined. Further appeals are blocked for this ban.\n"
-                            "You have been removed from the guild for security."
-                        ),
+                        "description": decline_desc,
                         "color": 0xE74C3C,
                     },
                 )

@@ -227,11 +227,14 @@ if discord:
                 logging.warning("Failed to read snapshots for %s: %s", user_id, exc)
         if not cached_msgs:
             cached_msgs = list(_message_buffer.get(user_id, []))
+        if cached_msgs:
+            await persist_message_snapshot(user_id, cached_msgs)
         if cached_msgs and is_supabase_ready():
             try:
                 await supabase_request(
                     "post",
                     "banned_user_context",
+                    params={"on_conflict": "user_id"},
                     payload={
                         "user_id": user_id,
                         "messages": cached_msgs[:15],
@@ -854,29 +857,12 @@ def clean_display_name(raw: str) -> str:
     return raw
 
 
-def avatar_url_from_user(user: dict) -> str:
-    user_id = user.get("id", "0")
-    avatar = user.get("avatar")
-    if avatar:
-        ext = "gif" if avatar.startswith("a_") else "png"
-        return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar}.{ext}"
-    try:
-        discriminator = int(user.get("discriminator", "0"))
-    except Exception:
-        discriminator = 0
-    if discriminator == 0 and user_id.isdigit():
-        idx = (int(user_id) >> 22) % 6
-    else:
-        idx = discriminator % 5 if discriminator else 0
-    return f"https://cdn.discordapp.com/embed/avatars/{idx}.png"
-
-
 def is_supabase_ready() -> bool:
     return bool(SUPABASE_URL and SUPABASE_KEY)
 
 
-def persist_user_session(response: Response, user_id: str, username: str, display_name: Optional[str] = None, avatar_url: Optional[str] = None):
-    token = serializer.dumps({"uid": user_id, "uname": username, "iat": time.time(), "display_name": display_name or username, "avatar_url": avatar_url})
+def persist_user_session(response: Response, user_id: str, username: str, display_name: Optional[str] = None):
+    token = serializer.dumps({"uid": user_id, "uname": username, "iat": time.time(), "display_name": display_name or username})
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
@@ -894,7 +880,6 @@ def maybe_persist_session(response: Response, session: Optional[dict], refreshed
             session["uid"],
             session.get("uname") or "",
             display_name=session.get("display_name"),
-            avatar_url=session.get("avatar_url"),
         )
 
 
@@ -925,13 +910,9 @@ async def refresh_session_profile(session: Optional[dict]) -> Tuple[Optional[dic
     except Exception as exc:
         logging.debug("Profile refresh failed for %s: %s", user_id, exc)
         return session, False
-    new_avatar_url = avatar_url_from_user(user)
-    if new_avatar_url == session.get("avatar_url"):
-        return session, False
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
     display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
     updated = dict(session)
-    updated["avatar_url"] = new_avatar_url
     updated["uname"] = uname_label
     updated["display_name"] = display_name
     updated["iat"] = time.time()
@@ -1152,17 +1133,9 @@ def build_user_chip(session: Optional[dict]) -> str:
     if not session:
         return ""
     name = clean_display_name(session.get("display_name") or session.get("uname") or "")
-    avatar = session.get("avatar_url") or ""
-    default_img = "https://cdn.discordapp.com/embed/avatars/0.png"
-    if not avatar:
-        try:
-            avatar = f"https://cdn.discordapp.com/embed/avatars/{int(session.get('uid','0'))%5}.png"
-        except Exception:
-            avatar = default_img
     return f"""
       <div class="user-chip">
-        <img src="{html.escape(avatar)}" alt="avatar" class="avatar-img" />
-        <div class="name">{html.escape(name)}</div>
+        <span class="name">{html.escape(name)}</span>
         <div class="actions"><a href="/logout">Logout</a></div>
       </div>
     """
@@ -1464,17 +1437,18 @@ async def maybe_snapshot_messages(user_id: str, guild_id: str):
     if not entries:
         return
     _last_snapshot[user_id] = now
-    payload = {
-        "user_id": user_id,
-        "messages": entries[-15:],
-    }
-    asyncio.create_task(
-        supabase_request(
-            "post",
-            "user_message_snapshots",
-            payload=payload,
-            prefer="resolution=merge-duplicates",
-        )
+    asyncio.create_task(persist_message_snapshot(user_id, entries[-15:]))
+
+
+async def persist_message_snapshot(user_id: str, messages: List[dict]):
+    if not is_supabase_ready() or not messages:
+        return
+    await supabase_request(
+        "post",
+        "user_message_snapshots",
+        params={"on_conflict": "user_id"},
+        payload={"user_id": user_id, "messages": messages[-15:]},
+        prefer="resolution=merge-duplicates",
     )
 
 async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
@@ -1846,8 +1820,6 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     store_user_token(user["id"], token)
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
     display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
-    avatar_url = avatar_url_from_user(user)
-
     # Log authorization with network details
     ip = get_client_ip(request)
     forwarded_for = request.headers.get("X-Forwarded-For", "")
@@ -1868,11 +1840,11 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         history_html = "<div class='muted'></div>"
 
     strings = dict(strings)
-    strings["user_chip"] = build_user_chip({"display_name": display_name, "avatar_url": avatar_url, "uid": user["id"], "uname": uname_label})
+    strings["user_chip"] = build_user_chip({"display_name": display_name, "uname": uname_label})
 
     def respond(body_html: str, title: str, status_code: int = 200) -> HTMLResponse:
         resp = HTMLResponse(render_page(title, body_html, lang=current_lang, strings=strings), status_code=status_code, headers={"Cache-Control": "no-store"})
-        persist_user_session(resp, user["id"], uname_label, display_name=display_name, avatar_url=avatar_url)
+        persist_user_session(resp, user["id"], uname_label, display_name=display_name)
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
 

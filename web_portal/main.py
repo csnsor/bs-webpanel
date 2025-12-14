@@ -71,14 +71,8 @@ if _missing_envs:
 
 # --- Shared resources ---
 http_client: Optional[httpx.AsyncClient] = None
+_temp_http_client: Optional[httpx.AsyncClient] = None
 JINJA_ENV = Environment(autoescape=select_autoescape(default_for_string=True, default=True))
-
-
-def get_http_client() -> httpx.AsyncClient:
-    if not http_client:
-        raise RuntimeError("HTTP client not initialized; lifespan startup did not run.")
-    return http_client
-
 
 async def app_lifespan(app: FastAPI):
     global http_client
@@ -89,6 +83,18 @@ async def app_lifespan(app: FastAPI):
         if http_client:
             await http_client.aclose()
             http_client = None
+        if _temp_http_client:
+            await _temp_http_client.aclose()
+            _temp_http_client = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    if http_client:
+        return http_client
+    global _temp_http_client
+    if not _temp_http_client:
+        _temp_http_client = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0))
+    return _temp_http_client
 
 # --- Basic app setup ---
 app = FastAPI(title="BlockSpin Appeals Portal", lifespan=app_lifespan)
@@ -156,6 +162,12 @@ bot_client = None
 _message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
 _recent_message_context: Dict[str, Tuple[List[dict], float]] = {}
 RECENT_MESSAGE_CACHE_TTL = int(os.getenv("RECENT_MESSAGE_CACHE_TTL", "120"))
+MESSAGE_SNAPSHOT_INTERVAL = int(os.getenv("MESSAGE_SNAPSHOT_INTERVAL", "60"))
+_last_snapshot: Dict[str, float] = {}
+
+
+def uid(value: Any) -> str:
+    return str(value)
 
 if discord:
     intents = discord.Intents.default()
@@ -175,235 +187,489 @@ if discord:
     async def on_message(message):
         if message.author.bot or not message.guild:
             return
+
+        if MESSAGE_CACHE_GUILD_ID and str(message.guild.id) != str(MESSAGE_CACHE_GUILD_ID):
+            return
+
+        user_id = uid(message.author.id)
         content = message.content or ""
         if message.attachments:
-            attachment_urls = "\n".join([f"[Attachment] {attachment.url}" for attachment in message.attachments])
+            attachment_urls = "\n".join(f"[Attachment] {attachment.url}" for attachment in message.attachments)
             content = f"{content}\n{attachment_urls}" if content else attachment_urls
         if not content.strip():
             return
-        ts_str = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
-        _message_buffer[str(message.author.id)].append(
-            {
-                "content": content,
-                "channel_id": str(message.channel.id),
-                "timestamp": ts_str,
-                "id": str(message.id),
-                "channel_name": getattr(message.channel, "name", "unknown"),
-            }
-        )
+        entry = {
+            "content": content,
+            "channel_id": str(message.channel.id),
+            "timestamp": int(message.created_at.timestamp()),
+            "id": str(message.id),
+            "channel_name": getattr(message.channel, "name", "unknown"),
+        }
+        _message_buffer[user_id].append(entry)
+        _recent_message_context[user_id] = (list(_message_buffer[user_id]), time.time())
+        await maybe_snapshot_messages(user_id, message.guild.id)
 
     @bot_client.event
     async def on_member_ban(guild, user):
-        user_id = str(user.id)
+        user_id = uid(user.id)
         logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
-        cached_msgs = list(_message_buffer.get(user_id, []))
+        cached_msgs = []
+        if is_supabase_ready():
+            try:
+                recs = await supabase_request(
+                    "get",
+                    "user_message_snapshots",
+                    params={"user_id": f"eq.{user_id}", "limit": 1},
+                )
+                if recs and recs[0].get("messages"):
+                    cached_msgs = recs[0]["messages"]
+            except Exception as exc:
+                logging.warning("Failed to read snapshots for %s: %s", user_id, exc)
+        if not cached_msgs:
+            cached_msgs = list(_message_buffer.get(user_id, []))
         if cached_msgs and is_supabase_ready():
-            _recent_message_context[user_id] = (list(cached_msgs), time.time())
             try:
                 await supabase_request(
                     "post",
                     "banned_user_context",
-                    payload={"user_id": user_id, "messages": cached_msgs, "banned_at": int(time.time())},
+                    payload={
+                        "user_id": user_id,
+                        "messages": cached_msgs[:15],
+                        "banned_at": int(time.time()),
+                    },
                     prefer="resolution=merge-duplicates",
                 )
-                _message_buffer.pop(user_id, None)
             except Exception as exc:
                 logging.warning("Failed to store banned context for %s: %s", user_id, exc)
+        _message_buffer.pop(user_id, None)
+        _recent_message_context.pop(user_id, None)
 
 BASE_STYLES = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-:root {
-  --bg: #090a0e;
-  --card-bg: rgba(20, 23, 30, 0.65);
-  --border: rgba(255,255,255,0.08);
-  --text: #edf2f7;
-  --muted: #8b949e;
-  --accent: #5865F2;
-  --accent-hover: #4752c4;
-  --accent-glow: rgba(88, 101, 242, 0.4);
-  --danger: #ed4245;
-  --success: #3ba55c;
-  --radius: 12px;
+:root{
+  --bg:#07080c;
+  --bg2:#0b0d14;
+  --card:rgba(18,21,30,.72);
+  --card2:rgba(14,16,24,.72);
+  --border:rgba(255,255,255,.08);
+  --border2:rgba(255,255,255,.12);
+
+  --text:#edf2f7;
+  --muted:#9aa4b2;
+  --muted2:#7c8592;
+
+  --accent:#5865F2;
+  --accent2:#7c5cff;
+  --accentGlow:rgba(88,101,242,.35);
+
+  --danger:#ef4444;
+  --dangerGlow:rgba(239,68,68,.25);
+  --success:#22c55e;
+
+  --radius:16px;
+  --radius2:12px;
+
+  --shadow: 0 18px 60px rgba(0,0,0,.45);
+  --shadow2: 0 10px 32px rgba(0,0,0,.35);
 }
 
-* { box-sizing: border-box; }
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
 
-body {
-  margin: 0;
-  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background-color: var(--bg);
-  color: var(--text);
-  background-image:
-    radial-gradient(circle at 15% 15%, rgba(88, 101, 242, 0.12) 0%, transparent 40%),
-    radial-gradient(circle at 85% 85%, rgba(237, 66, 69, 0.08) 0%, transparent 40%);
-  background-attachment: fixed;
-  display: grid;
-  place-items: center;
-  min-height: 100vh;
-  padding: 20px;
+body{
+  margin:0;
+  font-family:"Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  background:
+    radial-gradient(900px 600px at 15% 20%, rgba(88,101,242,.18), transparent 55%),
+    radial-gradient(900px 600px at 85% 80%, rgba(239,68,68,.10), transparent 55%),
+    linear-gradient(180deg, var(--bg), var(--bg2));
+  color:var(--text);
+  display:grid;
+  place-items:center;
+  padding:24px;
 }
 
-.app {
-  width: 100%;
-  max-width: 920px;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+a{ color:inherit; }
+
+.app{
+  width:100%;
+  max-width:980px;
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+  animation:enter .5s cubic-bezier(.16,1,.3,1);
 }
 
-@keyframes slideUp {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
+@keyframes enter{
+  from{ opacity:0; transform:translateY(14px); }
+  to{ opacity:1; transform:translateY(0); }
 }
 
-/* --- Branding --- */
-.brand-row { display: flex; justify-content: space-between; align-items: center; padding: 0 4px; }
-.brand { display: flex; align-items: center; gap: 16px; }
-.logo {
-  width: 44px; height: 44px;
-  background: linear-gradient(135deg, var(--accent), #7c5cff);
-  border-radius: 12px;
-  display: grid; place-items: center;
-  font-weight: 800; font-size: 20px; color: white;
-  box-shadow: 0 8px 20px -6px var(--accent-glow);
+/* --- Top bar --- */
+.brand-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:16px;
+  padding:0 2px;
 }
-.brand-text h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
-.brand-text span { font-size: 13px; color: var(--muted); font-weight: 500; }
+
+.brand{
+  display:flex;
+  align-items:center;
+  gap:14px;
+}
+
+.logo{
+  width:46px;height:46px;
+  border-radius:14px;
+  display:grid;place-items:center;
+  font-weight:800;
+  letter-spacing:-.02em;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  box-shadow: 0 16px 40px -12px var(--accentGlow);
+  user-select:none;
+}
+
+.brand-text h1{
+  margin:0;
+  font-size:18px;
+  font-weight:700;
+  letter-spacing:-.02em;
+}
+.brand-text span{
+  display:block;
+  font-size:12.5px;
+  color:var(--muted);
+  margin-top:2px;
+}
+
+/* --- Utilities --- */
+.muted{ color:var(--muted); }
+.small{ font-size:12px; color:var(--muted); }
+.hr{
+  height:1px;
+  background:var(--border);
+  margin:18px 0;
+}
 
 /* --- Cards --- */
-.card {
-  background: var(--card-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
+.card, .form-card{
+  background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.01));
+  background-color: var(--card);
+  border:1px solid var(--border);
   border-radius: var(--radius);
-  padding: 32px;
-  box-shadow: 0 4px 24px -1px rgba(0,0,0,0.2);
+  box-shadow: var(--shadow2);
+  padding:28px;
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
 }
 
-.hero {
-  padding: 40px;
-  background: linear-gradient(180deg, rgba(88,101,242,0.08) 0%, transparent 100%);
-  border: 1px solid rgba(88,101,242,0.2);
+.hero{
+  padding:36px;
+  border:1px solid rgba(88,101,242,.22);
+  background:
+    radial-gradient(500px 250px at 30% 0%, rgba(88,101,242,.18), transparent 70%),
+    linear-gradient(180deg, rgba(88,101,242,.08), transparent 60%);
 }
-.hero h1 { font-size: 32px; margin: 0 0 16px; letter-spacing: -0.03em; line-height: 1.1; }
-.hero p { font-size: 17px; line-height: 1.6; color: var(--muted); max-width: 600px; margin: 0 0 24px; }
 
-/* --- Forms --- */
-.grid-2 { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 20px; }
-@media(max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
-
-.field { margin-bottom: 20px; }
-.field label { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; letter-spacing: 0.04em; }
-
-input[type=text], textarea {
-  width: 100%;
-  background: rgba(0,0,0,0.25);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px;
-  font-size: 15px;
-  color: white;
-  font-family: inherit;
-  transition: all 0.2s ease;
+.hero h1{
+  margin:0 0 12px;
+  font-size:32px;
+  line-height:1.08;
+  letter-spacing:-.04em;
 }
-input:focus, textarea:focus {
-  outline: none;
-  border-color: var(--accent);
-  background: rgba(0,0,0,0.4);
-  box-shadow: 0 0 0 4px var(--accent-glow);
+.hero p{
+  margin:0 0 18px;
+  color:var(--muted);
+  font-size:16.5px;
+  line-height:1.6;
+  max-width:660px;
 }
-textarea { resize: vertical; min-height: 140px; line-height: 1.5; }
+
+.badge{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:999px;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:rgba(237,242,247,.9);
+  border:1px solid rgba(255,255,255,.10);
+  background:rgba(255,255,255,.04);
+  margin-bottom:14px;
+}
+
+/* Status variants */
+.status{
+  position:relative;
+  overflow:hidden;
+}
+.status.danger{
+  border-color: rgba(239,68,68,.30);
+  box-shadow: 0 18px 60px rgba(0,0,0,.45), 0 0 0 1px rgba(239,68,68,.10);
+}
+.status.danger::before{
+  content:"";
+  position:absolute; inset:-2px;
+  background: radial-gradient(650px 220px at 30% 0%, rgba(239,68,68,.18), transparent 70%);
+  pointer-events:none;
+}
 
 /* --- Buttons --- */
-.btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 12px 24px;
-  background: var(--accent);
-  color: white;
-  font-weight: 600;
-  border-radius: 8px;
-  text-decoration: none;
-  border: none;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 14px;
+.btn-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  margin-top:10px;
 }
-.btn:hover { background: var(--accent-hover); transform: translateY(-2px); box-shadow: 0 6px 20px -4px var(--accent-glow); }
-.btn:active { transform: translateY(0); }
 
-.btn.secondary {
-  background: transparent;
-  border: 1px solid var(--border);
+.btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:10px;
+  padding:12px 16px;
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.10);
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+  background-color: var(--accent);
+  color:white;
+  font-weight:700;
+  font-size:14px;
+  text-decoration:none;
+  cursor:pointer;
+  transition: transform .15s ease, box-shadow .15s ease, background .15s ease, border-color .15s ease;
+  box-shadow: 0 16px 40px -18px var(--accentGlow);
+}
+
+.btn:hover{
+  transform: translateY(-1px);
+  background-color:#4f5ae6;
+  box-shadow: 0 22px 50px -22px var(--accentGlow);
+}
+
+.btn:active{ transform: translateY(0); }
+
+.btn.secondary{
+  background: rgba(255,255,255,.03);
+  color: var(--text);
+  border-color: rgba(255,255,255,.10);
+  box-shadow:none;
+}
+
+.btn.secondary:hover{
+  background: rgba(255,255,255,.05);
+  border-color: rgba(255,255,255,.16);
+}
+
+/* --- Inputs --- */
+.grid-2{
+  display:grid;
+  grid-template-columns: 1.2fr .8fr;
+  gap:18px;
+}
+@media (max-width: 900px){
+  .grid-2{ grid-template-columns:1fr; }
+  .hero{ padding:28px; }
+}
+
+.field{ margin-bottom:16px; }
+.field label{
+  display:block;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color: var(--muted2);
+  margin-bottom:8px;
+}
+
+input[type=text], textarea{
+  width:100%;
+  border-radius:12px;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.28);
+  color: var(--text);
+  padding:13px 14px;
+  font-size:14.5px;
+  line-height:1.45;
+  transition: border-color .15s ease, box-shadow .15s ease, background .15s ease;
+}
+
+textarea{ min-height:150px; resize:vertical; }
+
+input:focus, textarea:focus{
+  outline:none;
+  border-color: rgba(88,101,242,.70);
+  box-shadow: 0 0 0 4px rgba(88,101,242,.18);
+  background: rgba(0,0,0,.36);
+}
+
+/* --- Callouts / error boxes --- */
+.callout{
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.03);
+  border-radius: 14px;
+  padding:12px 14px;
   color: var(--muted);
-  box-shadow: none;
-}
-.btn.secondary:hover { border-color: var(--text); color: var(--text); transform: translateY(-2px); }
-
-.btn-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
-
-/* --- Badges & Chips --- */
-.user-chip {
-  display: flex; align-items: center; gap: 12px;
-  background: rgba(255,255,255,0.03);
-  padding: 6px 16px 6px 6px;
-  border-radius: 50px;
-  border: 1px solid var(--border);
-  transition: border-color 0.2s;
-}
-.user-chip:hover { border-color: rgba(255,255,255,0.2); }
-.user-chip img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
-.user-chip .name { font-size: 14px; font-weight: 600; }
-.user-chip a { font-size: 12px; color: var(--muted); text-decoration: none; margin-left: auto; }
-.user-chip a:hover { color: var(--accent); }
-
-.badge {
-  display: inline-block; padding: 4px 10px; border-radius: 6px;
-  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
-  background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--muted);
-  margin-bottom: 12px;
+  font-size:13px;
+  line-height:1.5;
 }
 
-/* --- Status Lists --- */
-.history-item {
-  background: rgba(0,0,0,0.2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-  display: flex; flex-direction: column; gap: 8px;
+.error-box{
+  margin-top:10px;
+  border:1px solid rgba(239,68,68,.25);
+  background: rgba(239,68,68,.08);
+  border-radius:14px;
+  padding:12px 14px;
+  color: rgba(255,255,255,.92);
+  font-size:13px;
+  line-height:1.5;
 }
-.history-item .status-chip { margin-bottom: 6px; }
-.status-chip { display: inline-flex; font-size: 12px; font-weight: 600; padding: 4px 8px; border-radius: 4px; width: fit-content; }
-.status-chip.accepted { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
-.status-chip.declined { color: #f87171; background: rgba(248, 113, 113, 0.1); }
-.status-chip.pending { color: #818cf8; background: rgba(129, 140, 248, 0.1); }
 
-/* chat log */
-.chat-box {
-  background: rgba(0, 0, 0, 0.3);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-  max-height: 300px;
-  overflow-y: auto;
-  font-family: "Consolas", "Monaco", monospace;
-  font-size: 13px;
+/* --- User chip --- */
+.user-chip{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:8px 12px 8px 8px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.03);
 }
-.chat-row {
-  display: flex;
-  gap: 10px;
-  padding: 4px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.03);
-}
-.chat-row:last-child { border-bottom: none; }
-.chat-time { color: var(--muted); min-width: 130px; font-size: 11px; }
-.chat-content { color: var(--text); word-break: break-word; }
-.chat-channel { color: var(--accent); font-weight: bold; font-size: 11px; }
 
-.footer { margin-top: 30px; font-size: 13px; color: var(--muted); opacity: 0.6; text-align: center; }
+.user-chip img{
+  width:34px;height:34px;
+  border-radius:999px;
+  object-fit:cover;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(0,0,0,.25);
+}
+
+.user-chip .name{
+  font-weight:700;
+  font-size:13.5px;
+}
+
+.user-chip .actions a{
+  margin-left:10px;
+  font-size:12px;
+  color: var(--muted);
+  text-decoration:none;
+}
+.user-chip .actions a:hover{ color: var(--text); }
+
+/* --- History list --- */
+.history-list{
+  list-style:none;
+  padding:0;
+  margin:14px 0 0;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+
+.history-item{
+  border:1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.22);
+  border-radius: 14px;
+  padding:14px;
+  display:grid;
+  grid-template-columns: 1fr;
+  gap:8px;
+}
+
+.history-item .meta{
+  font-size:13px;
+  color: var(--muted);
+  line-height:1.45;
+}
+
+.status-chip{
+  display:inline-flex;
+  width:fit-content;
+  align-items:center;
+  gap:8px;
+  padding:6px 10px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:800;
+  letter-spacing:.02em;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.03);
+}
+
+.status-chip.accepted{ color: rgba(34,197,94,.95); border-color: rgba(34,197,94,.22); background: rgba(34,197,94,.10); }
+.status-chip.declined{ color: rgba(239,68,68,.95); border-color: rgba(239,68,68,.22); background: rgba(239,68,68,.10); }
+.status-chip.pending{ color: rgba(129,140,248,.95); border-color: rgba(129,140,248,.22); background: rgba(129,140,248,.10); }
+
+/* --- Chat / message context --- */
+.chat-box{
+  border:1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.25);
+  border-radius: 14px;
+  padding:10px;
+  max-height:340px;
+  overflow:auto;
+}
+
+.chat-row{
+  display:grid;
+  grid-template-columns: 170px 1fr;
+  gap:12px;
+  padding:10px 10px;
+  border-radius: 12px;
+}
+.chat-row + .chat-row{ margin-top:6px; }
+.chat-row:hover{
+  background: rgba(255,255,255,.03);
+}
+
+.chat-time{
+  font-size:11px;
+  color: var(--muted2);
+  line-height:1.2;
+  white-space:nowrap;
+}
+
+.chat-channel{
+  display:inline-block;
+  margin-top:6px;
+  font-size:11px;
+  font-weight:800;
+  color: rgba(88,101,242,.95);
+  border:1px solid rgba(88,101,242,.25);
+  background: rgba(88,101,242,.10);
+  padding:4px 8px;
+  border-radius:999px;
+}
+
+.chat-content{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size:13px;
+  line-height:1.5;
+  color: rgba(237,242,247,.95);
+  word-break:break-word;
+}
+
+/* --- Footer --- */
+.footer{
+  margin-top:8px;
+  font-size:12.5px;
+  color: rgba(154,164,178,.85);
+  opacity:.85;
+  text-align:center;
+}
+
 """
+
+
+
 
 LANG_STRINGS = {
     "en": {
@@ -459,28 +725,25 @@ LANG_STRINGS = {
 }
 LANG_CACHE: Dict[str, Dict[str, str]] = {}
 HISTORY_TEMPLATE = JINJA_ENV.from_string(
-    """
+"""
 <ul class="history-list">
 {% for item in history %}
   {% set status = (item.get("status") or "pending").lower() %}
   {% set status_class = "pending" %}
-  {% if status.startswith("accept") %}
-    {% set status_class = "accepted" %}
-  {% elif status.startswith("decline") %}
-    {% set status_class = "declined" %}
+  {% if status.startswith("accept") %}{% set status_class = "accepted" %}
+  {% elif status.startswith("decline") %}{% set status_class = "declined" %}
   {% endif %}
   <li class="history-item">
     <div class="status-chip {{ status_class }}">{{ status.title() }}</div>
-    <div class="meta">Reference: {{ item.get("appeal_id") or "-" }}</div>
-    <div class="meta">Submitted: {{ format_timestamp(item.get("created_at") or "") }}</div>
-    <div class="meta">Ban reason: {{ item.get("ban_reason") or "No ban reason recorded." }}</div>
-    <div class="meta">Appeal: {{ item.get("appeal_reason") or "No appeal reason captured." }}</div>
+    <div class="meta"><strong>Reference:</strong> {{ item.get("appeal_id") or "-" }}</div>
+    <div class="meta"><strong>Submitted:</strong> {{ format_timestamp(item.get("created_at") or "") }}</div>
+    <div class="meta"><strong>Ban reason:</strong> {{ item.get("ban_reason") or "No ban reason recorded." }}</div>
+    <div class="meta"><strong>Appeal:</strong> {{ item.get("appeal_reason") or "No appeal reason captured." }}</div>
   </li>
 {% endfor %}
 </ul>
 """
 )
-
 
 # --- Helpers ---
 def normalize_language(lang: Optional[str]) -> str:
@@ -622,6 +885,17 @@ def persist_user_session(response: Response, user_id: str, username: str, displa
         httponly=True,
         samesite="Lax",
     )
+
+
+def maybe_persist_session(response: Response, session: Optional[dict], refreshed: bool):
+    if session and refreshed:
+        persist_user_session(
+            response,
+            session["uid"],
+            session.get("uname") or "",
+            display_name=session.get("display_name"),
+            avatar_url=session.get("avatar_url"),
+        )
 
 
 def read_user_session(request: Request) -> Optional[dict]:
@@ -799,15 +1073,6 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     user_chip = strings.get("user_chip", "")
     script_block = strings.get("script_block")
     script_nonce = strings.get("script_nonce") or secrets.token_urlsafe(12)
-    avatar_fix_script = """
-    window.addEventListener('error', function(e) {
-        if (e.target && e.target.tagName === 'IMG') {
-            if (e.target.src.includes('embed/avatars')) return;
-            e.target.src = 'https://cdn.discordapp.com/embed/avatars/0.png';
-            e.target.onerror = null;
-        }
-    }, true);
-    """
     csp = (
         "default-src 'self'; "
         "img-src 'self' data: https://*.discordapp.com https://*.discord.com; "
@@ -853,7 +1118,6 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         </div>
         
         <script nonce="{script_nonce}">
-            {avatar_fix_script}
             {script_block or ""}
         </script>
       </body>
@@ -1187,6 +1451,32 @@ async def send_log_message(content: str):
         logging.warning("Log post failed: %s", exc)
 
 
+async def maybe_snapshot_messages(user_id: str, guild_id: str):
+    if not is_supabase_ready():
+        return
+    if not MESSAGE_CACHE_GUILD_ID or str(guild_id) != MESSAGE_CACHE_GUILD_ID:
+        return
+    now = time.time()
+    last = _last_snapshot.get(user_id, 0)
+    if now - last < MESSAGE_SNAPSHOT_INTERVAL:
+        return
+    entries = list(_message_buffer.get(user_id, []))
+    if not entries:
+        return
+    _last_snapshot[user_id] = now
+    payload = {
+        "user_id": user_id,
+        "messages": entries[-15:],
+    }
+    asyncio.create_task(
+        supabase_request(
+            "post",
+            "user_message_snapshots",
+            payload=payload,
+            prefer="resolution=merge-duplicates",
+        )
+    )
+
 async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
     """Fetch ban context cached by the bot and stored in Supabase; keep for reuse."""
     if not is_supabase_ready():
@@ -1194,12 +1484,12 @@ async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
     try:
         recs = await supabase_request(
             "get",
-            "banned_user_context",
+            "user_message_snapshots",
             params={"user_id": f"eq.{user_id}", "limit": 1},
         )
         if recs and recs[0].get("messages"):
             messages = recs[0]["messages"]
-            return sorted(messages, key=lambda x: x.get("timestamp", ""), reverse=True)[:limit]
+            return sorted(messages, key=lambda x: x.get("timestamp", 0), reverse=True)[:limit]
     except Exception as exc:
         logging.warning("Failed to fetch context for %s: %s", user_id, exc)
     return _get_recent_message_context(user_id, limit)
@@ -1213,7 +1503,13 @@ def _get_recent_message_context(user_id: str, limit: int) -> List[dict]:
     if time.time() - ts > RECENT_MESSAGE_CACHE_TTL:
         _recent_message_context.pop(user_id, None)
         return []
-    return sorted(messages, key=lambda x: x.get("timestamp", ""), reverse=True)[:limit]
+    def _timestamp_value(msg: dict) -> float:
+        try:
+            return float(msg.get("timestamp") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    return sorted(messages, key=_timestamp_value, reverse=True)[:limit]
 
 
 async def post_appeal_embed(
@@ -1425,14 +1721,7 @@ async def home(request: Request, lang: Optional[str] = None):
     }})();
     """
     response = HTMLResponse(render_page("BlockSpin Appeals", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
-    if user_session and session_refreshed:
-        persist_user_session(
-            response,
-            user_session["uid"],
-            user_session.get("uname") or "",
-            display_name=user_session.get("display_name"),
-            avatar_url=user_session.get("avatar_url"),
-        )
+    maybe_persist_session(response, user_session, session_refreshed)
     response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
     return response
 
@@ -1510,14 +1799,7 @@ async def status_page(request: Request, lang: Optional[str] = None):
       </div>
     """
     resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
-    if session and session_refreshed:
-        persist_user_session(
-            resp,
-            session["uid"],
-            session.get("uname") or "",
-            display_name=session.get("display_name"),
-            avatar_url=session.get("avatar_url"),
-        )
+    maybe_persist_session(resp, session, session_refreshed)
     resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
     return resp
 

@@ -659,14 +659,13 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     toggle_label = strings.get("language_switch", "Switch language")
     user_chip = strings.get("user_chip", "")
     script_block = strings.get("script_block")
-    script_nonce = strings.get("script_nonce")
-    base_csp = (
+    csp = (
         "default-src 'self'; "
         "img-src 'self' data: https://*.discordapp.com https://*.discord.com; "
         "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; "
         "connect-src 'self' https://discord.com https://*.discord.com; "
     )
-    csp = base_csp + (f"script-src 'self' 'nonce-{script_nonce}'" if script_nonce else "script-src 'self'")
     favicon = (
         "data:image/svg+xml,"
         "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E"
@@ -703,7 +702,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
           </div>
           <div class="footer">© {year} BlockSpin • Secure Appeals</div>
         </div>
-        {f"<script nonce='{script_nonce}'>{script_block}</script>" if script_block else ""}
+        {f"<script>{script_block}</script>" if script_block else ""}
       </body>
     </html>
     """

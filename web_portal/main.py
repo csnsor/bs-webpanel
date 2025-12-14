@@ -6,7 +6,6 @@ import time
 import html
 import copy
 import hashlib
-import json
 from datetime import datetime, timezone
 from collections import deque, defaultdict
 from typing import Optional, Tuple, Dict, List, Any
@@ -174,12 +173,18 @@ if discord:
 
     @bot_client.event
     async def on_message(message):
-        if message.author.bot:
+        if message.author.bot or not message.guild:
+            return
+        content = message.content or ""
+        if message.attachments:
+            attachment_urls = "\n".join([f"[Attachment] {attachment.url}" for attachment in message.attachments])
+            content = f"{content}\n{attachment_urls}" if content else attachment_urls
+        if not content.strip():
             return
         ts_str = message.created_at.strftime("%Y-%m-%d %H:%M:%S")
         _message_buffer[str(message.author.id)].append(
             {
-                "content": message.content,
+                "content": content,
                 "channel_id": str(message.channel.id),
                 "timestamp": ts_str,
                 "id": str(message.id),
@@ -587,16 +592,19 @@ def clean_display_name(raw: str) -> str:
 
 
 def avatar_url_from_user(user: dict) -> str:
-    avatar = user.get("avatar")
     user_id = user.get("id", "0")
+    avatar = user.get("avatar")
     if avatar:
         ext = "gif" if avatar.startswith("a_") else "png"
-        return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar}.{ext}?size=128"
-    # default embed avatars rotated
+        return f"https://cdn.discordapp.com/avatars/{user_id}/{avatar}.{ext}"
     try:
-        idx = int(user_id) % 5
+        discriminator = int(user.get("discriminator", "0"))
     except Exception:
-        idx = 0
+        discriminator = 0
+    if discriminator == 0 and user_id.isdigit():
+        idx = (int(user_id) >> 22) % 6
+    else:
+        idx = discriminator % 5 if discriminator else 0
     return f"https://cdn.discordapp.com/embed/avatars/{idx}.png"
 
 
@@ -643,17 +651,17 @@ async def refresh_session_profile(session: Optional[dict]) -> Tuple[Optional[dic
     except Exception as exc:
         logging.debug("Profile refresh failed for %s: %s", user_id, exc)
         return session, False
-    avatar_url = avatar_url_from_user(user)
+    new_avatar_url = avatar_url_from_user(user)
+    if new_avatar_url == session.get("avatar_url"):
+        return session, False
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
     display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
-    changed = avatar_url != session.get("avatar_url")
     updated = dict(session)
-    if changed:
-        updated["avatar_url"] = avatar_url
-        updated["uname"] = uname_label
-        updated["display_name"] = display_name
-        updated["iat"] = time.time()
-    return updated, changed
+    updated["avatar_url"] = new_avatar_url
+    updated["uname"] = uname_label
+    updated["display_name"] = display_name
+    updated["iat"] = time.time()
+    return updated, True
 
 
 async def supabase_request(method: str, table: str, *, params: Optional[dict] = None, payload: Optional[dict] = None, prefer: Optional[str] = None):
@@ -1182,7 +1190,7 @@ async def send_log_message(content: str):
 async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
     """Fetch ban context cached by the bot and stored in Supabase; keep for reuse."""
     if not is_supabase_ready():
-        return []
+        return _get_recent_message_context(user_id, limit)
     try:
         recs = await supabase_request(
             "get",
@@ -1194,7 +1202,18 @@ async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
             return sorted(messages, key=lambda x: x.get("timestamp", ""), reverse=True)[:limit]
     except Exception as exc:
         logging.warning("Failed to fetch context for %s: %s", user_id, exc)
-    return []
+    return _get_recent_message_context(user_id, limit)
+
+
+def _get_recent_message_context(user_id: str, limit: int) -> List[dict]:
+    entry = _recent_message_context.get(user_id)
+    if not entry:
+        return []
+    messages, ts = entry
+    if time.time() - ts > RECENT_MESSAGE_CACHE_TTL:
+        _recent_message_context.pop(user_id, None)
+        return []
+    return sorted(messages, key=lambda x: x.get("timestamp", ""), reverse=True)[:limit]
 
 
 async def post_appeal_embed(

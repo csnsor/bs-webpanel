@@ -46,10 +46,12 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_TABLE = "discord-appeals"
 SUPABASE_SESSION_TABLE = "discord-appeal-sessions"
+SUPABASE_CONTEXT_TABLE = "banned_user_context"
 INVITE_LINK = "https://discord.gg/blockspin"
 MESSAGE_CACHE_GUILD_IDS_RAW = os.getenv("MESSAGE_CACHE_GUILD_ID", "1337420081382297682")
 READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
+DEBUG_EVENTS = os.getenv("DEBUG_EVENTS", "false").lower() == "true"
 
 OAUTH_SCOPES = "identify guilds.join"
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -201,40 +203,54 @@ if discord:
 
         if not should_track_messages(message.guild.id):
             logging.debug("Skipping message cache for guild %s", message.guild.id)
+            if DEBUG_EVENTS:
+                print(f"[DEBUG] Skipping message from guild {message.guild.id} (Not in allowlist)")
             return
 
         user_id = uid(message.author.id)
-        content = message.content or ""
+        content = message.content or "[Attachment/Embed]"
         if message.attachments:
             attachment_urls = "\n".join(f"[Attachment] {attachment.url}" for attachment in message.attachments)
-            content = f"{content}\n{attachment_urls}" if content else attachment_urls
+            content = f"{content}\n{attachment_urls}" if content and content != "[Attachment/Embed]" else content
         if not content.strip():
+            if DEBUG_EVENTS:
+                print(f"[DEBUG] Dropping empty content message from {message.author.name}")
             return
+        ts_str = message.created_at.isoformat()
         entry = {
             "content": content,
             "channel_id": str(message.channel.id),
             "timestamp": int(message.created_at.timestamp()),
-            "id": str(message.id),
             "channel_name": getattr(message.channel, "name", "unknown"),
+            "timestamp_iso": ts_str,
+            "id": str(message.id),
         }
         _message_buffer[user_id].append(entry)
         _recent_message_context[user_id] = (list(_message_buffer[user_id]), time.time())
+        if DEBUG_EVENTS:
+            print(f"[DEBUG] RAM Cache for {message.author.name}: {len(_message_buffer[user_id])} messages stored.")
         await maybe_snapshot_messages(user_id, message.guild.id)
 
 @bot_client.event
 async def on_member_ban(guild, user):
     user_id = uid(user.id)
     if not should_track_messages(guild.id):
+        if DEBUG_EVENTS:
+            print(f"[DEBUG] Ignoring ban from guild {guild.id} (Not in allowlist)")
         return
 
     logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
     cached_msgs = list(_message_buffer.get(user_id, []))
 
+    if DEBUG_EVENTS:
+        print(f"[DEBUG] Found {len(cached_msgs)} messages in RAM for {user.name}.")
     if cached_msgs and is_supabase_ready():
+        if DEBUG_EVENTS:
+            print(f"[DEBUG] Attempting to write to Supabase table '{SUPABASE_CONTEXT_TABLE}'...")
         try:
             await supabase_request(
                 "post",
-                "banned_user_context",
+                SUPABASE_CONTEXT_TABLE,
                 params={"on_conflict": "user_id"},
                 payload={
                     "user_id": user_id,
@@ -244,8 +260,14 @@ async def on_member_ban(guild, user):
                 prefer="resolution=merge-duplicates",
             )
             logging.info("Saved %d messages to Supabase for %s", len(cached_msgs), user_id)
+            if DEBUG_EVENTS:
+                print(f"[DEBUG] Supabase Write Result: success for {user_id}")
         except Exception as exc:
             logging.warning("Failed to store banned context for %s: %s", user_id, exc)
+            if DEBUG_EVENTS:
+                print(f"[DEBUG] CRITICAL SUPABASE ERROR: {exc}")
+    elif DEBUG_EVENTS:
+        print("[DEBUG] Supabase credentials missing/invalid or no messages to send.")
 
     _message_buffer.pop(user_id, None)
     _recent_message_context.pop(user_id, None)

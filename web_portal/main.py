@@ -302,7 +302,7 @@ LANG_STRINGS = {
         "stay_signed_in": "Stay signed in",
         "stay_signed_in_blurb": "We keep your session secured so you can check decisions anytime.",
         "history_title": "Appeal history",
-        "history_blurb": "Logged with Supabase for transparency and security.",
+        "history_blurb": "",
         "welcome_back": "Welcome back",
         "review_ban": "Review my ban",
         "start_now": "Start now",
@@ -327,7 +327,7 @@ LANG_STRINGS = {
         "stay_signed_in": "Mantente conectado",
         "stay_signed_in_blurb": "Guardamos tu sesión de forma segura para que revises decisiones en cualquier momento.",
         "history_title": "Historial de apelaciones",
-        "history_blurb": "Registrado con Supabase para transparencia y seguridad.",
+        "history_blurb": "",
         "welcome_back": "Bienvenido de nuevo",
         "review_ban": "Revisar mi expulsión",
         "start_now": "Comenzar",
@@ -339,27 +339,20 @@ LANG_STRINGS = {
         "language_switch": "Cambiar idioma",
     },
 }
+LANG_CACHE: Dict[str, Dict[str, str]] = {}
 
 
 # --- Helpers ---
 def normalize_language(lang: Optional[str]) -> str:
     if not lang:
         return "en"
-    lang = lang.lower()
-    if lang.startswith("es"):
-        return "es"
-    return "en"
+    lang = lang.split(",")[0].split(";")[0].strip().lower()
+    if "-" in lang:
+        lang = lang.split("-")[0]
+    return lang or "en"
 
 
-def get_strings(lang: str) -> Dict[str, str]:
-    lang = normalize_language(lang)
-    base = LANG_STRINGS["en"]
-    if lang == "en":
-        return base
-    return {**base, **LANG_STRINGS.get(lang, {})}
-
-
-def detect_language(request: Request, lang_param: Optional[str] = None) -> str:
+async def detect_language(request: Request, lang_param: Optional[str] = None) -> str:
     if lang_param:
         return normalize_language(lang_param)
     cookie_lang = request.cookies.get("lang")
@@ -368,7 +361,37 @@ def detect_language(request: Request, lang_param: Optional[str] = None) -> str:
     accept = request.headers.get("accept-language", "")
     if accept:
         return normalize_language(accept.split(",")[0].strip())
+    ip = get_client_ip(request)
+    if ip and ip not in {"127.0.0.1", "::1", "unknown"}:
+        try:
+            async with httpx.AsyncClient(timeout=3) as client:
+                resp = await client.get(f"https://ipapi.co/{ip}/json/")
+                if resp.status_code == 200:
+                    data = resp.json() or {}
+                    langs = data.get("languages")
+                    if langs:
+                        return normalize_language(langs.split(",")[0])
+                    cc = data.get("country_code")
+                    if cc:
+                        return normalize_language(cc.lower())
+        except Exception as exc:
+            logging.warning("Geo lookup failed for ip=%s error=%s", ip, exc)
     return "en"
+
+
+async def get_strings(lang: str) -> Dict[str, str]:
+    lang = normalize_language(lang)
+    base = LANG_STRINGS["en"]
+    if lang in LANG_STRINGS:
+        return LANG_STRINGS[lang]
+    if lang in LANG_CACHE:
+        return LANG_CACHE[lang]
+    translated: Dict[str, str] = {}
+    for key, text in base.items():
+        translated[key] = await translate_text(text, target_lang=lang, source_lang="en")
+    merged = {**base, **translated}
+    LANG_CACHE[lang] = merged
+    return merged
 
 
 async def translate_text(text: str, target_lang: str = "en", source_lang: Optional[str] = None) -> str:
@@ -516,7 +539,7 @@ async def fetch_appeal_record(appeal_id: str) -> Optional[dict]:
 
 def render_history_items(history: List[dict]) -> str:
     if not history:
-        return "<div class='muted'>No recorded appeals yet. Once you submit, your history will appear here.</div>"
+        return "<div class='muted'>No appeals yet.</div>"
     items = []
     for item in history:
         status = (item.get("status") or "pending").lower()
@@ -542,11 +565,12 @@ def render_history_items(history: List[dict]) -> str:
     return f"<ul class='history-list'>{''.join(items)}</ul>"
 
 
-def render_page(title: str, body_html: str, lang: str = "en") -> str:
+def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[Dict[str, str]] = None) -> str:
     lang = normalize_language(lang)
     year = time.gmtime().tm_year
+    strings = strings or LANG_STRINGS["en"]
     toggle_lang = "es" if lang != "es" else "en"
-    toggle_label = get_strings(lang)["language_switch"]
+    toggle_label = strings.get("language_switch", "Switch language")
     return f"""
     <html>
       <head>
@@ -582,10 +606,10 @@ def wants_html(request: Request) -> bool:
     return "text/html" in accept or "*/*" in accept
 
 
-def render_error(title: str, message: str, status_code: int = 400, lang: str = "en") -> HTMLResponse:
+def render_error(title: str, message: str, status_code: int = 400, lang: str = "en", strings: Optional[Dict[str, str]] = None) -> HTMLResponse:
     safe_title = html.escape(title)
     safe_msg = html.escape(message)
-    strings = get_strings(lang)
+    strings = strings or LANG_STRINGS["en"]
     content = f"""
       <div class="card" style="text-align:center;">
         <div class="icon-error">!</div>
@@ -605,16 +629,18 @@ def render_error(title: str, message: str, status_code: int = 400, lang: str = "
 async def http_exception_handler(request: Request, exc: HTTPException):
     if wants_html(request):
         msg = exc.detail if isinstance(exc.detail, str) else "Something went wrong."
-        lang = detect_language(request)
-        return render_error("Request failed", msg, exc.status_code, lang=lang)
+        lang = await detect_language(request)
+        strings = await get_strings(lang)
+        return render_error("Request failed", msg, exc.status_code, lang=lang, strings=strings)
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     if wants_html(request):
-        lang = detect_language(request)
-        return render_error("Invalid input", "Please check the form and try again.", 422, lang=lang)
+        lang = await detect_language(request)
+        strings = await get_strings(lang)
+        return render_error("Invalid input", "Please check the form and try again.", 422, lang=lang, strings=strings)
     return JSONResponse(status_code=422, content={"detail": exc.errors()})
 
 
@@ -622,8 +648,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logging.exception("Unhandled error: %s", exc)
     if wants_html(request):
-        lang = detect_language(request)
-        return render_error("Server error", "Unexpected error. Please try again.", 500, lang=lang)
+        lang = await detect_language(request)
+        strings = await get_strings(lang)
+        return render_error("Server error", "Unexpected error. Please try again.", 500, lang=lang, strings=strings)
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
@@ -868,9 +895,12 @@ async def post_appeal_embed(
 # --- Routes ---
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, lang: Optional[str] = None):
-    current_lang = detect_language(request, lang)
-    strings = get_strings(current_lang)
+    current_lang = await detect_language(request, lang)
+    strings = await get_strings(current_lang)
     state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang})
+    ip = get_client_ip(request)
+    ua = request.headers.get("User-Agent", "")
+    asyncio.create_task(send_log_message(f"[visit_home] ip={ip} ua={ua} lang={current_lang}"))
     user_session = read_user_session(request)
     history_html = ""
     if user_session and is_supabase_ready():
@@ -943,15 +973,42 @@ async def home(request: Request, lang: Optional[str] = None):
         {history_block}
       </div>
     """
-    response = HTMLResponse(render_page("BlockSpin Appeals", content, lang=current_lang), headers={"Cache-Control": "no-store"})
+    response = HTMLResponse(render_page("BlockSpin Appeals", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
     response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
     return response
 
 
+@app.get("/tos", response_class=HTMLResponse)
+async def tos():
+    content = """
+      <div class="card">
+        <h2>Terms of Service</h2>
+        <p class="muted">BlockSpin appeals require truthful information. Automated abuse, evasion attempts, and falsified evidence are prohibited. Decisions by moderators are final unless otherwise stated.</p>
+        <p class="muted">By using this portal you consent to basic logging for security, including IP, device, and account identifiers.</p>
+      </div>
+    """
+    return HTMLResponse(render_page("Terms of Service", content), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy():
+    content = """
+      <div class="card">
+        <h2>Privacy</h2>
+        <p class="muted">We record appeal details, IP/network metadata, and basic device info to prevent abuse and support moderation. Data is shared only with BlockSpin staff for security and compliance.</p>
+        <p class="muted">By continuing, you agree to this collection for security, fraud prevention, and audit purposes.</p>
+      </div>
+    """
+    return HTMLResponse(render_page("Privacy", content), headers={"Cache-Control": "no-store"})
+
+
 @app.get("/status", response_class=HTMLResponse)
 async def status_page(request: Request, lang: Optional[str] = None):
-    current_lang = detect_language(request, lang)
-    strings = get_strings(current_lang)
+    current_lang = await detect_language(request, lang)
+    strings = await get_strings(current_lang)
+    ip = get_client_ip(request)
+    ua = request.headers.get("User-Agent", "")
+    asyncio.create_task(send_log_message(f"[visit_status] ip={ip} ua={ua} lang={current_lang}"))
     session = read_user_session(request)
     if not session:
         login_url = oauth_authorize_url(serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang}))
@@ -962,7 +1019,7 @@ async def status_page(request: Request, lang: Optional[str] = None):
             <a class="btn" href="{login_url}">{strings['login']}</a>
           </div>
         """
-        resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang), status_code=401, headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), status_code=401, headers={"Cache-Control": "no-store"})
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
 
@@ -982,7 +1039,7 @@ async def status_page(request: Request, lang: Optional[str] = None):
         <div class="footer">Need to update details? Start a new session from the home page.</div>
       </div>
     """
-    resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang), headers={"Cache-Control": "no-store"})
+    resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
     resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
     return resp
 
@@ -995,7 +1052,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         raise HTTPException(status_code=400, detail="Invalid state")
 
     current_lang = normalize_language(lang or state_data.get("lang"))
-    strings = get_strings(current_lang)
+    strings = await get_strings(current_lang)
 
     token = await exchange_code_for_token(code)
     user = await fetch_discord_user(token["access_token"])
@@ -1008,7 +1065,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     ua = request.headers.get("User-Agent", "")
     asyncio.create_task(
         send_log_message(
-            f"[auth] user={user['id']} uname={uname_label} ip={ip} fwd={forwarded_for} ua={ua}"
+            f"[auth] user={user['id']} uname={uname_label} ip={ip} fwd={forwarded_for} ua={ua} lang={current_lang}"
         )
     )
 
@@ -1020,7 +1077,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         history_html = "<div class='muted'>History will appear after Supabase is configured.</div>"
 
     def respond(body_html: str, title: str, status_code: int = 200) -> HTMLResponse:
-        resp = HTMLResponse(render_page(title, body_html, lang=current_lang), status_code=status_code, headers={"Cache-Control": "no-store"})
+        resp = HTMLResponse(render_page(title, body_html, lang=current_lang, strings=strings), status_code=status_code, headers={"Cache-Control": "no-store"})
         persist_user_session(resp, user["id"], uname_label)
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
@@ -1080,6 +1137,8 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     # Only now join the DM guild (best effort) and tidy up invites.
     await ensure_dm_guild_membership(user["id"])
 
+    message_cache = await fetch_message_cache(user["id"])
+
     session = serializer.dumps(
         {
             "uid": user["id"],
@@ -1094,7 +1153,6 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     uname = html.escape(f"{user['username']}#{user.get('discriminator','0')}")
     ban_reason = html.escape(ban.get("reason", "No reason provided."))
     cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
-    message_cache = await fetch_message_cache(user["id"])
     message_cache_html = ""
     if message_cache:
         rows = "".join(
@@ -1173,6 +1231,11 @@ async def submit(
     forwarded_for = request.headers.get("X-Forwarded-For", "")
     user_agent = request.headers.get("User-Agent", "unknown")
     enforce_ip_rate_limit(ip)
+    asyncio.create_task(
+        send_log_message(
+            f"[appeal_attempt] user={data.get('uid')} ip={ip} fwd={forwarded_for} ua={user_agent}"
+        )
+    )
 
     # Rate limit to prevent spam
     last = _appeal_rate_limit.get(data["uid"])
@@ -1224,6 +1287,7 @@ async def submit(
     for token in stale_sessions:
         _used_sessions.pop(token, None)
 
+    strings = await get_strings(user_lang)
     success = f"""
       <div class="card">
         <h1>Appeal submitted</h1>
@@ -1233,7 +1297,7 @@ async def submit(
       </div>
     """
 
-    return HTMLResponse(render_page("Appeal submitted", success, lang=user_lang), status_code=200, headers={"Cache-Control": "no-store"})
+    return HTMLResponse(render_page("Appeal submitted", success, lang=user_lang, strings=strings), status_code=200, headers={"Cache-Control": "no-store"})
 
 
 # --- Discord interactions (button handling) ---

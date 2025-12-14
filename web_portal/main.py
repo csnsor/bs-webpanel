@@ -6,8 +6,9 @@ import time
 import html
 import copy
 import hashlib
+from datetime import datetime, timezone
 from collections import deque, defaultdict
-from typing import Optional, Tuple, Dict, List
+from typing import Optional, Tuple, Dict, List, Any
 
 try:
     import discord  # type: ignore
@@ -15,6 +16,7 @@ except ImportError:  # allow app to boot even if discord.py isn't installed
     discord = None
 
 import httpx
+from jinja2 import Environment, select_autoescape
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,6 +48,7 @@ SUPABASE_TABLE = "discord-appeals"
 SUPABASE_SESSION_TABLE = "discord-appeal-sessions"
 INVITE_LINK = "https://discord.gg/blockspin"
 MESSAGE_CACHE_GUILD_ID = os.getenv("MESSAGE_CACHE_GUILD_ID", "1065973360040890418")
+READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
 
 OAUTH_SCOPES = "identify guilds.join"
@@ -66,8 +69,29 @@ _missing_envs = [
 if _missing_envs:
     raise RuntimeError(f"Missing required environment variables: {', '.join(_missing_envs)}")
 
+# --- Shared resources ---
+http_client: Optional[httpx.AsyncClient] = None
+JINJA_ENV = Environment(autoescape=select_autoescape(default_for_string=True, default=True))
+
+
+def get_http_client() -> httpx.AsyncClient:
+    if not http_client:
+        raise RuntimeError("HTTP client not initialized; lifespan startup did not run.")
+    return http_client
+
+
+async def app_lifespan(app: FastAPI):
+    global http_client
+    http_client = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0))
+    try:
+        yield
+    finally:
+        if http_client:
+            await http_client.aclose()
+            http_client = None
+
 # --- Basic app setup ---
-app = FastAPI(title="BlockSpin Appeals Portal")
+app = FastAPI(title="BlockSpin Appeals Portal", lifespan=app_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -86,7 +110,12 @@ async def startup_event():
     if not DISCORD_BOT_TOKEN:
         logging.warning("DISCORD_BOT_TOKEN missing; bot client not started.")
         raise RuntimeError("DISCORD_BOT_TOKEN missing; bot client cannot start.")
-    asyncio.create_task(bot_client.start(DISCORD_BOT_TOKEN))
+    try:
+        await bot_client.login(DISCORD_BOT_TOKEN)
+    except Exception as exc:
+        logging.exception("Discord bot login failed: %s", exc)
+        raise RuntimeError("Discord bot token is invalid or missing required intents.") from exc
+    asyncio.create_task(bot_client.connect())
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
@@ -107,7 +136,7 @@ _used_sessions: Dict[str, float] = {}  # {session_token: timestamp_used}
 _ip_requests: Dict[str, List[float]] = {}  # {ip: [timestamps]}
 _ban_first_seen: Dict[str, float] = {}  # {user_id: first time we saw the ban}
 _appeal_locked: Dict[str, bool] = {}  # {user_id: True if appealed already}
-_user_tokens: Dict[str, str] = {}  # {user_id: last OAuth access token}
+_user_tokens: Dict[str, Dict[str, Any]] = {}  # {user_id: {"access_token": str, "refresh_token": str, "expires_at": float}}
 _processed_appeals: Dict[str, float] = {}  # {appeal_id: timestamp_processed}
 _declined_users: Dict[str, bool] = {}  # {user_id: True if appeal declined}
 _state_tokens: Dict[str, Tuple[str, float]] = {}  # {token: (ip, issued_at)}
@@ -389,7 +418,7 @@ LANG_STRINGS = {
         "error_retry": "Retry",
         "error_home": "Go Home",
         "ban_details": "Ban details",
-        "messages_header": "Recent messages (cached)",
+        "messages_header": "Recent messages",
         "no_messages": "No cached messages available.",
         "language_switch": "Switch language",
     },
@@ -420,6 +449,28 @@ LANG_STRINGS = {
     },
 }
 LANG_CACHE: Dict[str, Dict[str, str]] = {}
+HISTORY_TEMPLATE = JINJA_ENV.from_string(
+    """
+<ul class="history-list">
+{% for item in history %}
+  {% set status = (item.get("status") or "pending").lower() %}
+  {% set status_class = "pending" %}
+  {% if status.startswith("accept") %}
+    {% set status_class = "accepted" %}
+  {% elif status.startswith("decline") %}
+    {% set status_class = "declined" %}
+  {% endif %}
+  <li class="history-item">
+    <div class="status-chip {{ status_class }}">{{ status.title() }}</div>
+    <div class="meta">Reference: {{ item.get("appeal_id") or "-" }}</div>
+    <div class="meta">Submitted: {{ format_timestamp(item.get("created_at") or "") }}</div>
+    <div class="meta">Ban reason: {{ item.get("ban_reason") or "No ban reason recorded." }}</div>
+    <div class="meta">Appeal: {{ item.get("appeal_reason") or "No appeal reason captured." }}</div>
+  </li>
+{% endfor %}
+</ul>
+"""
+)
 
 
 # --- Helpers ---
@@ -430,6 +481,20 @@ def normalize_language(lang: Optional[str]) -> str:
     if "-" in lang:
         lang = lang.split("-")[0]
     return lang or "en"
+
+
+def format_timestamp(value: str) -> str:
+    """Convert various timestamp formats to a friendly label."""
+    if not value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        try:
+            dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except Exception:
+            return value
+    return dt.astimezone(timezone.utc).strftime("%b %d, %Y • %H:%M UTC")
 
 
 def hash_value(raw: str) -> str:
@@ -454,16 +519,16 @@ async def detect_language(request: Request, lang_param: Optional[str] = None) ->
     ip = get_client_ip(request)
     if ip and ip not in {"127.0.0.1", "::1", "unknown"}:
         try:
-            async with httpx.AsyncClient(timeout=3) as client:
-                resp = await client.get(f"https://ipapi.co/{ip}/json/")
-                if resp.status_code == 200:
-                    data = resp.json() or {}
-                    langs = data.get("languages")
-                    if langs:
-                        return normalize_language(langs.split(",")[0])
-                    cc = data.get("country_code")
-                    if cc:
-                        return normalize_language(cc.lower())
+            client = get_http_client()
+            resp = await client.get(f"https://ipapi.co/{ip}/json/", timeout=3)
+            if resp.status_code == 200:
+                data = resp.json() or {}
+                langs = data.get("languages")
+                if langs:
+                    return normalize_language(langs.split(",")[0])
+                cc = data.get("country_code")
+                if cc:
+                    return normalize_language(cc.lower())
         except Exception as exc:
             logging.warning("Geo lookup failed for ip=%s error=%s", ip, exc)
     return "en"
@@ -488,21 +553,22 @@ async def translate_text(text: str, target_lang: str = "en", source_lang: Option
     if not text or normalize_language(target_lang) == "en" and normalize_language(source_lang) == "en":
         return text
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
-            resp = await client.post(
-                LIBRETRANSLATE_URL,
-                json={
-                    "q": text,
-                    "source": source_lang or "auto",
-                    "target": target_lang,
-                    "format": "text",
-                },
-                headers={"Content-Type": "application/json"},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                return data.get("translatedText") or text
-            logging.warning("Translation failed status=%s body=%s", resp.status_code, resp.text)
+        client = get_http_client()
+        resp = await client.post(
+            LIBRETRANSLATE_URL,
+            json={
+                "q": text,
+                "source": source_lang or "auto",
+                "target": target_lang,
+                "format": "text",
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=8,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("translatedText") or text
+        logging.warning("Translation failed status=%s body=%s", resp.status_code, resp.text)
     except Exception as exc:
         logging.warning("Translation exception: %s", exc)
     return text
@@ -559,6 +625,33 @@ def read_user_session(request: Request) -> Optional[dict]:
         return None
 
 
+async def refresh_session_profile(session: Optional[dict]) -> Tuple[Optional[dict], bool]:
+    if not session:
+        return None, False
+    user_id = session.get("uid")
+    if not user_id:
+        return session, False
+    token = await get_valid_access_token(str(user_id))
+    if not token:
+        return session, False
+    try:
+        user = await fetch_discord_user(token)
+    except Exception as exc:
+        logging.debug("Profile refresh failed for %s: %s", user_id, exc)
+        return session, False
+    avatar_url = avatar_url_from_user(user)
+    uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
+    display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
+    changed = avatar_url != session.get("avatar_url")
+    updated = dict(session)
+    if changed:
+        updated["avatar_url"] = avatar_url
+        updated["uname"] = uname_label
+        updated["display_name"] = display_name
+        updated["iat"] = time.time()
+    return updated, changed
+
+
 async def supabase_request(method: str, table: str, *, params: Optional[dict] = None, payload: Optional[dict] = None, prefer: Optional[str] = None):
     if not is_supabase_ready():
         return None
@@ -570,11 +663,11 @@ async def supabase_request(method: str, table: str, *, params: Optional[dict] = 
     }
     url = f"{SUPABASE_URL.rstrip('/')}/rest/v1/{table}"
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.request(method, url, params=params, headers=headers, json=payload)
-            resp.raise_for_status()
-            if resp.content:
-                return resp.json()
+        client = get_http_client()
+        resp = await client.request(method, url, params=params, headers=headers, json=payload, timeout=10)
+        resp.raise_for_status()
+        if resp.content:
+            return resp.json()
     except Exception as exc:
         logging.warning("Supabase request failed table=%s method=%s error=%s", table, method, exc)
     return None
@@ -662,12 +755,9 @@ async def update_appeal_status(
     await supabase_request("patch", SUPABASE_TABLE, params={"appeal_id": f"eq.{appeal_id}"}, payload=payload)
 
 
-async def fetch_appeal_history(user_id: str, limit: int = 6) -> List[dict]:
-    records = await supabase_request(
-        "get",
-        SUPABASE_TABLE,
-        params={"user_id": f"eq.{user_id}", "order": "created_at.desc", "limit": limit},
-    )
+async def fetch_appeal_history(user_id: str, limit: int = 25) -> List[dict]:
+    params = {"user_id": f"eq.{user_id}", "order": "created_at.desc", "limit": min(limit, 100)}
+    records = await supabase_request("get", SUPABASE_TABLE, params=params)
     return records or []
 
 
@@ -685,30 +775,7 @@ async def fetch_appeal_record(appeal_id: str) -> Optional[dict]:
 def render_history_items(history: List[dict]) -> str:
     if not history:
         return "<div class='muted'>No appeals yet.</div>"
-    items = []
-    for item in history:
-        status = (item.get("status") or "pending").lower()
-        status_class = "pending"
-        if status.startswith("accept"):
-            status_class = "accepted"
-        elif status.startswith("decline"):
-            status_class = "declined"
-        appeal_reason = html.escape(item.get("appeal_reason") or "No appeal reason captured.")
-        ban_reason = html.escape(item.get("ban_reason") or "No ban reason recorded.")
-        created_at = html.escape(str(item.get("created_at") or ""))
-        status_label = html.escape(status.title())
-        items.append(
-            f"""
-            <li class="history-item">
-              <div class="status-chip {status_class}">{status_label}</div>
-              <div class="meta">Reference: {html.escape(item.get("appeal_id") or '-')}</div>
-              <div class="meta">Submitted: {created_at}</div>
-              <div class="meta">Ban reason: {ban_reason}</div>
-              <div class="meta">Appeal: {appeal_reason}</div>
-            </li>
-            """
-        )
-    return f"<ul class='history-list'>{''.join(items)}</ul>"
+    return HISTORY_TEMPLATE.render(history=history, format_timestamp=format_timestamp)
 
 
 def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[Dict[str, str]] = None) -> str:
@@ -894,8 +961,9 @@ def validate_state_token(token: str, ip: str) -> bool:
     saved_ip, ts = record
     if time.time() - ts > 900:
         return False
-    # Allow slight IP variance if proxied; only check if both known
-    if saved_ip not in {"unknown", "", None} and ip not in {"unknown", "", None} and saved_ip != ip:
+    if ip in {"unknown", "", None} or saved_ip in {"unknown", "", None}:
+        return False
+    if saved_ip != ip:
         return False
     return True
 
@@ -915,46 +983,93 @@ def enforce_ip_rate_limit(ip: str):
 
 async def exchange_code_for_token(code: str) -> dict:
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{DISCORD_API_BASE}/oauth2/token",
-                data={
-                    "client_id": DISCORD_CLIENT_ID,
-                    "client_secret": DISCORD_CLIENT_SECRET,
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": DISCORD_REDIRECT_URI,
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            resp.raise_for_status()
-            return resp.json()
+        client = get_http_client()
+        resp = await client.post(
+            f"{DISCORD_API_BASE}/oauth2/token",
+            data={
+                "client_id": DISCORD_CLIENT_ID,
+                "client_secret": DISCORD_CLIENT_SECRET,
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": DISCORD_REDIRECT_URI,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        resp.raise_for_status()
+        return resp.json()
     except httpx.HTTPStatusError as exc:
         logging.warning("OAuth code exchange failed: %s | body=%s", exc, exc.response.text)
         raise HTTPException(status_code=400, detail="Authentication failed. Please try logging in again.") from exc
 
 
-async def fetch_discord_user(access_token: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{DISCORD_API_BASE}/users/@me",
-            headers={"Authorization": f"Bearer {access_token}"},
+def store_user_token(user_id: str, token_data: dict):
+    expires_in = float(token_data.get("expires_in") or 0)
+    _user_tokens[user_id] = {
+        "access_token": token_data.get("access_token"),
+        "refresh_token": token_data.get("refresh_token"),
+        "expires_at": time.time() + expires_in - 60 if expires_in else None,
+        "token_type": token_data.get("token_type", "Bearer"),
+    }
+
+
+async def refresh_user_token(user_id: str) -> Optional[str]:
+    token_data = _user_tokens.get(user_id) or {}
+    refresh_token = token_data.get("refresh_token")
+    if not refresh_token:
+        return None
+    try:
+        client = get_http_client()
+        resp = await client.post(
+            f"{DISCORD_API_BASE}/oauth2/token",
+            data={
+                "client_id": DISCORD_CLIENT_ID,
+                "client_secret": DISCORD_CLIENT_SECRET,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         resp.raise_for_status()
-        return resp.json()
+        new_token = resp.json()
+        store_user_token(user_id, new_token)
+        return new_token.get("access_token")
+    except Exception as exc:
+        logging.warning("Failed to refresh token for user %s: %s", user_id, exc)
+        return None
+
+
+async def get_valid_access_token(user_id: str) -> Optional[str]:
+    token_data = _user_tokens.get(user_id) or {}
+    access_token = token_data.get("access_token")
+    expires_at = token_data.get("expires_at")
+    if not access_token:
+        return None
+    if expires_at and time.time() > expires_at:
+        return await refresh_user_token(user_id)
+    return access_token
+
+
+async def fetch_discord_user(access_token: str) -> dict:
+    client = get_http_client()
+    resp = await client.get(
+        f"{DISCORD_API_BASE}/users/@me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def fetch_ban_if_exists(user_id: str) -> Optional[dict]:
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/bans/{user_id}",
-            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-        )
-        if resp.status_code == 200:
-            return resp.json()
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
+    client = get_http_client()
+    resp = await client.get(
+        f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/bans/{user_id}",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+    )
+    if resp.status_code == 200:
+        return resp.json()
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
     return None
 
 
@@ -964,81 +1079,98 @@ async def ensure_dm_guild_membership(user_id: str) -> bool:
         return False
     if _declined_users.get(user_id):
         return False
-    token = _user_tokens.get(user_id)
+    token = await get_valid_access_token(user_id)
     if not token:
         return False
-    async with httpx.AsyncClient() as client:
-        resp = await client.put(
-            f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/members/{user_id}",
-            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-            json={"access_token": token},
-        )
-        added = resp.status_code in (200, 201, 204)
-        if added and CLEANUP_DM_INVITES:
-            try:
-                invite_resp = await client.get(
-                    f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/invites",
-                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                )
-                if invite_resp.status_code == 200:
-                    for invite in invite_resp.json() or []:
-                        code = invite.get("code")
-                        if not code:
-                            continue
-                        await client.delete(
-                            f"{DISCORD_API_BASE}/invites/{code}",
-                            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                        )
-                else:
-                    logging.warning(
-                        "Invite cleanup skipped status=%s body=%s",
-                        invite_resp.status_code,
-                        invite_resp.text,
+    client = get_http_client()
+    resp = await client.put(
+        f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/members/{user_id}",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        json={"access_token": token},
+    )
+    added = resp.status_code in (200, 201, 204)
+    if added and CLEANUP_DM_INVITES:
+        try:
+            invite_resp = await client.get(
+                f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/invites",
+                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            )
+            if invite_resp.status_code == 200:
+                for invite in invite_resp.json() or []:
+                    code = invite.get("code")
+                    if not code:
+                        continue
+                    await client.delete(
+                        f"{DISCORD_API_BASE}/invites/{code}",
+                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
                     )
-            except Exception as exc:  # best-effort cleanup
-                logging.exception("Failed invite cleanup: %s", exc)
+            else:
+                logging.warning(
+                    "Invite cleanup skipped status=%s body=%s",
+                    invite_resp.status_code,
+                    invite_resp.text,
+                )
+        except Exception as exc:  # best-effort cleanup
+            logging.exception("Failed invite cleanup: %s", exc)
     return added
 
 
 async def maybe_remove_from_dm_guild(user_id: str):
     if not DM_GUILD_ID or not REMOVE_FROM_DM_GUILD_AFTER_DM:
         return
-    async with httpx.AsyncClient() as client:
-        await client.delete(
-            f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/members/{user_id}",
-            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-        )
+    client = get_http_client()
+    await client.delete(
+        f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/members/{user_id}",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+    )
 
 
 async def remove_from_target_guild(user_id: str) -> Optional[int]:
-    async with httpx.AsyncClient() as client:
-        resp = await client.delete(
-            f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/members/{user_id}",
-            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-        )
-        if resp.status_code not in (200, 204, 404):
-            logging.warning("Failed to remove user %s from guild %s: %s %s", user_id, TARGET_GUILD_ID, resp.status_code, resp.text)
-        return resp.status_code
+    client = get_http_client()
+    resp = await client.delete(
+        f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/members/{user_id}",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+    )
+    if resp.status_code not in (200, 204, 404):
+        logging.warning("Failed to remove user %s from guild %s: %s %s", user_id, TARGET_GUILD_ID, resp.status_code, resp.text)
+    return resp.status_code
+
+
+async def add_user_to_guild(user_id: str, guild_id: str) -> Optional[int]:
+    token = await get_valid_access_token(user_id)
+    if not token:
+        logging.warning("No OAuth token cached for user %s; cannot re-add to guild %s", user_id, guild_id)
+        return None
+    client = get_http_client()
+    resp = await client.put(
+        f"{DISCORD_API_BASE}/guilds/{guild_id}/members/{user_id}",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        json={"access_token": token},
+    )
+    if resp.status_code not in (200, 201, 204):
+        logging.warning("Failed to add user %s to guild %s: %s %s", user_id, guild_id, resp.status_code, resp.text)
+    return resp.status_code
 
 
 async def send_log_message(content: str):
     """Send a plaintext log line to the auth/ops channel."""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(
+        client = get_http_client()
+        resp = await client.post(
+            f"{DISCORD_API_BASE}/channels/{AUTH_LOG_CHANNEL_ID}/messages",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            json={"content": content},
+            timeout=10,
+        )
+        if resp.status_code == 429:
+            retry = float(resp.headers.get("Retry-After", "1"))
+            await asyncio.sleep(min(retry, 5.0))
+            return await client.post(
                 f"{DISCORD_API_BASE}/channels/{AUTH_LOG_CHANNEL_ID}/messages",
                 headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
                 json={"content": content},
             )
-            if resp.status_code == 429:
-                retry = float(resp.headers.get("Retry-After", "1"))
-                await asyncio.sleep(min(retry, 5.0))
-                return await client.post(
-                    f"{DISCORD_API_BASE}/channels/{AUTH_LOG_CHANNEL_ID}/messages",
-                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                    json={"content": content},
-                )
-            resp.raise_for_status()
+        resp.raise_for_status()
     except Exception as exc:
         logging.warning("Log post failed: %s", exc)
 
@@ -1098,15 +1230,15 @@ async def post_appeal_embed(
             ],
         }
     ]
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{DISCORD_API_BASE}/channels/{APPEAL_CHANNEL_ID}/messages",
-            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-            json={"embeds": [embed], "components": components},
-        )
-        if resp.status_code == 429:
-            raise HTTPException(status_code=429, detail="Discord is rate limiting. Please retry in a minute.")
-        resp.raise_for_status()
+    client = get_http_client()
+    resp = await client.post(
+        f"{DISCORD_API_BASE}/channels/{APPEAL_CHANNEL_ID}/messages",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        json={"embeds": [embed], "components": components},
+    )
+    if resp.status_code == 429:
+        raise HTTPException(status_code=429, detail="Discord is rate limiting. Please retry in a minute.")
+    resp.raise_for_status()
 
 
 # --- Routes ---
@@ -1119,6 +1251,7 @@ async def home(request: Request, lang: Optional[str] = None):
     state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
     asyncio.create_task(send_log_message(f"[visit_home] ip_hash={hash_ip(ip)} lang={current_lang}"))
     user_session = read_user_session(request)
+    user_session, session_refreshed = await refresh_session_profile(user_session)
     user_chip = build_user_chip(user_session)
     strings = dict(strings)
     strings["user_chip"] = user_chip
@@ -1166,12 +1299,51 @@ async def home(request: Request, lang: Optional[str] = None):
       else f"""
       <div class="card">
         <h2>{strings['history_title']}</h2>
-        {history_html}
+        <div id="live-history">{history_html}</div>
       </div>
       """}
     """
     script_nonce = secrets.token_urlsafe(12)
     strings["script_nonce"] = script_nonce
+    history_poll = ""
+    if user_session:
+        history_poll = """
+      const historyEl = document.getElementById('live-history');
+      async function loadHistory() {
+        if (!historyEl) return;
+        try {
+          const res = await fetch('/status/data', { headers: { 'Accept': 'application/json' }});
+          if (!res.ok) throw new Error('status ' + res.status);
+          const data = await res.json();
+          const history = data.history || [];
+          if (!history.length) {
+            historyEl.innerHTML = "<div class='muted'>No appeals yet.</div>";
+            return;
+          }
+          const rows = history.map(item => {
+            const status = (item.status || 'pending').toLowerCase();
+            const statusClass = status.startsWith('accept') ? 'accepted' : status.startsWith('decline') ? 'declined' : 'pending';
+            const created = item.created_at || '';
+            const safeRef = (item.appeal_id || '').replace(/</g,'&lt;');
+            const safeBan = (item.ban_reason || '').replace(/</g,'&lt;');
+            return `
+              <li class="history-item">
+                <div class="status-chip ${statusClass}">${status.charAt(0).toUpperCase()+status.slice(1)}</div>
+                <div class="meta">Reference: ${safeRef || '-'}</div>
+                <div class="meta">Submitted: ${created}</div>
+                <div class="meta">Ban reason: ${safeBan}</div>
+              </li>
+            `;
+          }).join('');
+          historyEl.innerHTML = `<ul class='history-list'>${rows}</ul>`;
+        } catch (e) {
+          // leave existing content
+        }
+      }
+      loadHistory();
+      setInterval(loadHistory, 20000);
+    """
+
     strings["script_block"] = f"""
     (function() {{
       const el = document.getElementById('live-status');
@@ -1197,9 +1369,47 @@ async def home(request: Request, lang: Optional[str] = None):
       }}
       tick();
       setInterval(tick, 15000);
+      {history_poll}
+    }})();
+    """
+    # Override script block to ensure clean characters in live status text
+    strings["script_block"] = f"""
+    (function() {{
+      const el = document.getElementById('live-status');
+      if (!el) return;
+      const valEl = el.querySelector('.value');
+      async function tick() {{
+        try {{
+          const res = await fetch('/status/data', {{ headers: {{ 'Accept': 'application/json' }} }});
+          if (!res.ok) throw new Error('status ' + res.status);
+          const data = await res.json();
+          const history = data.history || [];
+          if (!history.length) {{
+            valEl.textContent = 'No appeals yet.';
+            return;
+          }}
+          const latest = history[0];
+          const status = latest.status || 'pending';
+          const ref = latest.appeal_id || 'n/a';
+          valEl.textContent = status + ' • ref ' + ref;
+        }} catch (e) {{
+          valEl.textContent = 'Live updates unavailable.';
+        }}
+      }}
+      tick();
+      setInterval(tick, 15000);
+      {history_poll}
     }})();
     """
     response = HTMLResponse(render_page("BlockSpin Appeals", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
+    if user_session and session_refreshed:
+        persist_user_session(
+            response,
+            user_session["uid"],
+            user_session.get("uname") or "",
+            display_name=user_session.get("display_name"),
+            avatar_url=user_session.get("avatar_url"),
+        )
     response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
     return response
 
@@ -1292,7 +1502,7 @@ async def status_data(request: Request):
         {
             "appeal_id": item.get("appeal_id"),
             "status": item.get("status"),
-            "created_at": item.get("created_at"),
+            "created_at": format_timestamp(item.get("created_at")),
             "ban_reason": item.get("ban_reason"),
         }
         for item in history
@@ -1319,7 +1529,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
 
     token = await exchange_code_for_token(code)
     user = await fetch_discord_user(token["access_token"])
-    _user_tokens[user["id"]] = token["access_token"]
+    store_user_token(user["id"], token)
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
     display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
     avatar_url = avatar_url_from_user(user)
@@ -1428,7 +1638,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         msgs_to_show = list(reversed(message_cache))
         rows = []
         for m in msgs_to_show:
-            ts = html.escape(m.get("timestamp", ""))
+            ts = html.escape(format_timestamp(m.get("timestamp")))
             content = html.escape(m.get("content") or "")
             channel = html.escape(m.get("channel_name") or "#channel")
             rows.append(
@@ -1466,7 +1676,6 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
           <h2>{strings['ban_details']}</h2>
           <p class="muted"><strong>User:</strong> {uname}</p>
           <p class="muted"><strong>Ban reason:</strong> {ban_reason}</p>
-          <p class="muted">Cooldown between submissions: {cooldown_minutes} minutes. Appeals expire 7 days after the ban.</p>
           <div style="margin-top:12px;">
             <h3 style="margin:0 0 6px;">{strings['messages_header']}</h3>
             {message_cache_html}
@@ -1568,9 +1777,10 @@ async def submit(
         user_agent,
     )
 
+    msg_cache = data.get("message_cache") or []
     asyncio.create_task(
         send_log_message(
-            f"[appeal_submitted] appeal={appeal_id} user={user['id']} ip_hash={hash_ip(ip)} lang={user_lang} ban_reason=\"{data.get('ban_reason','N/A')}\" msg_ctx={len(data.get('message_cache') or [])}"
+            f"[appeal_submitted] appeal={appeal_id} user={user['id']} ip_hash={hash_ip(ip)} lang={user_lang} ban_reason=\"{data.get('ban_reason','N/A')}\" msg_ctx={len(msg_cache)}"
         )
     )
 
@@ -1647,26 +1857,26 @@ async def edit_original(message: dict, content: Optional[str] = None, color: int
 async def dm_user(user_id: str, embed: dict):
     # Ensure we share a guild for DMs; this is best-effort.
     await ensure_dm_guild_membership(user_id)
-    async with httpx.AsyncClient() as client:
-        dm = await client.post(
-            f"{DISCORD_API_BASE}/users/@me/channels",
-            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-            json={"recipient_id": user_id},
-        )
-        if dm.status_code not in (200, 201):
-            return False
-        channel_id = dm.json().get("id")
-        if not channel_id:
-            return False
-        resp = await client.post(
-            f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
-            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-            json={"embeds": [embed]},
-        )
-        delivered = resp.status_code in (200, 201)
-        if delivered:
-            await maybe_remove_from_dm_guild(user_id)
-        return delivered
+    client = get_http_client()
+    dm = await client.post(
+        f"{DISCORD_API_BASE}/users/@me/channels",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        json={"recipient_id": user_id},
+    )
+    if dm.status_code not in (200, 201):
+        return False
+    channel_id = dm.json().get("id")
+    if not channel_id:
+        return False
+    resp = await client.post(
+        f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        json={"embeds": [embed]},
+    )
+    delivered = resp.status_code in (200, 201)
+    if delivered:
+        await maybe_remove_from_dm_guild(user_id)
+    return delivered
 
 
 def build_decision_embed(
@@ -1678,6 +1888,7 @@ def build_decision_embed(
     unban_status: Optional[int] = None,
     removal_status: Optional[int] = None,
     invite_link: Optional[str] = None,
+    add_status: Optional[int] = None,
 ):
     accepted = status == "accepted"
     color = 0x2ECC71 if accepted else 0xE74C3C
@@ -1692,6 +1903,8 @@ def build_decision_embed(
         fields.append({"name": "Unban", "value": str(unban_status), "inline": True})
     if removal_status:
         fields.append({"name": "Guild removal", "value": str(removal_status), "inline": True})
+    if add_status:
+        fields.append({"name": "Guild add", "value": str(add_status), "inline": True})
     return {
         "title": title,
         "description": desc,
@@ -1758,8 +1971,8 @@ async def interactions(request: Request):
         if not appeal_id or not user_id or action not in {"web_appeal_accept", "web_appeal_decline"}:
             return await respond_ephemeral_embed("Invalid request", "Malformed interaction data.")
 
-        # Prepare immediate UI update embed (buttons removed)
-        def updated_embed(status: str) -> dict:
+        # Prepare UI update embed (buttons removed) to reflect real outcome
+        def updated_embed(status: str, note: Optional[str] = None) -> dict:
             embed = copy.deepcopy(original_embed) or {}
             if status == "accepted":
                 color = 0x2ECC71
@@ -1774,34 +1987,32 @@ async def interactions(request: Request):
             embed["fields"] = embed.get("fields", []) + [
                 {"name": "Action Taken", "value": f"{label} by <@{moderator_id}>", "inline": False}
             ]
+            if note:
+                embed["fields"].append({"name": "Notes", "value": note, "inline": False})
             return embed
 
-        # Run the heavy work in background to avoid interaction timeouts.
-        async def handle_accept():
+        async def handle_accept() -> Tuple[Optional[dict], Optional[str]]:
+            if appeal_id in _processed_appeals:
+                return None, "Appeal already processed."
+            _processed_appeals[appeal_id] = time.time()
             try:
-                # idempotency: ignore double clicks / retries
-                if appeal_id in _processed_appeals:
-                    logging.info("Interactions: appeal %s already processed, skipping accept", appeal_id)
-                    return
-                _processed_appeals[appeal_id] = time.time()
-
                 appeal_record = await fetch_appeal_record(appeal_id)
                 user_lang = normalize_language((appeal_record or {}).get("user_lang", "en"))
 
-                unban_status = None
-                async with httpx.AsyncClient() as client:
-                    unban_resp = await client.delete(
-                        f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/bans/{user_id}",
-                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                    )
-                    unban_status = unban_resp.status_code
+                client = get_http_client()
+                unban_resp = await client.delete(
+                    f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/bans/{user_id}",
+                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                )
+                unban_status = unban_resp.status_code
+                if unban_status not in (200, 204, 404):
+                    raise RuntimeError(f"Unban failed with status {unban_status}")
 
                 removal_status = await remove_from_target_guild(user_id)
+                readd_status = await add_user_to_guild(user_id, READD_GUILD_ID)
 
-                # DM user (best effort)
                 accept_desc_en = (
-                    "Your appeal has been reviewed and accepted. You have been unbanned.\n"
-                    f"Use this invite to rejoin BlockSpin: {INVITE_LINK}"
+                    "Your appeal has been reviewed and accepted. You have been unbanned and re-added to the server."
                 )
                 accept_desc = (
                     await translate_text(accept_desc_en, target_lang=user_lang, source_lang="en")
@@ -1833,24 +2044,36 @@ async def interactions(request: Request):
                     dm_delivered=dm_delivered,
                     unban_status=unban_status,
                     removal_status=removal_status,
-                    invite_link=INVITE_LINK,
+                    add_status=readd_status,
                 )
 
-                async with httpx.AsyncClient() as client:
-                    await client.post(
-                        f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
-                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                        json={"embeds": [log_embed]},
-                    )
-            except Exception as exc:  # log for debugging
-                logging.exception("Failed to process acceptance for appeal %s: %s", appeal_id, exc)
+                await client.post(
+                    f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
+                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                    json={"embeds": [log_embed]},
+                )
 
-        async def handle_decline():
+                note = []
+                if unban_status not in (200, 204):
+                    note.append(f"Unban status: {unban_status}")
+                if removal_status and removal_status not in (200, 204, 404):
+                    note.append(f"Removal status: {removal_status}")
+                if readd_status and readd_status not in (200, 201, 204):
+                    note.append(f"Re-add status: {readd_status}")
+                if not dm_delivered:
+                    note.append("DM delivery failed")
+                note_text = "; ".join(note) if note else None
+                return updated_embed("accepted", note_text), None
+            except Exception as exc:  # log for debugging
+                _processed_appeals.pop(appeal_id, None)
+                logging.exception("Failed to process acceptance for appeal %s: %s", appeal_id, exc)
+                return None, "Unable to accept appeal. Check bot permissions and try again."
+
+        async def handle_decline() -> Tuple[Optional[dict], Optional[str]]:
+            if appeal_id in _processed_appeals:
+                return None, "Appeal already processed."
+            _processed_appeals[appeal_id] = time.time()
             try:
-                if appeal_id in _processed_appeals:
-                    logging.info("Interactions: appeal %s already processed, skipping decline", appeal_id)
-                    return
-                _processed_appeals[appeal_id] = time.time()
                 _declined_users[user_id] = True
                 _appeal_locked[user_id] = True
 
@@ -1894,33 +2117,45 @@ async def interactions(request: Request):
                     removal_status=removal_status,
                 )
 
-                async with httpx.AsyncClient() as client:
-                    await client.post(
-                        f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
-                        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                        json={"embeds": [log_embed]},
-                    )
+                client = get_http_client()
+                await client.post(
+                    f"{DISCORD_API_BASE}/channels/{APPEAL_LOG_CHANNEL_ID}/messages",
+                    headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+                    json={"embeds": [log_embed]},
+                )
 
-                # Remove from DM guild after decline and cleanup invites
                 await maybe_remove_from_dm_guild(user_id)
+
+                note = []
+                if removal_status and removal_status not in (200, 204, 404):
+                    note.append(f"Removal status: {removal_status}")
+                if not dm_delivered:
+                    note.append("DM delivery failed")
+                return updated_embed("declined", "; ".join(note) if note else None), None
             except Exception as exc:  # log for debugging
+                _processed_appeals.pop(appeal_id, None)
                 logging.exception("Failed to process decline for appeal %s: %s", appeal_id, exc)
+                return None, "Unable to decline appeal right now."
 
         if action == "web_appeal_accept":
-            asyncio.create_task(handle_accept())
+            embed, error = await handle_accept()
+            if error:
+                return await respond_ephemeral_embed("Action failed", error)
             return JSONResponse(
                 {
                     "type": 7,
-                    "data": {"embeds": [updated_embed("accepted")], "components": []},
+                    "data": {"embeds": [embed], "components": []},
                 }
             )
 
         if action == "web_appeal_decline":
-            asyncio.create_task(handle_decline())
+            embed, error = await handle_decline()
+            if error:
+                return await respond_ephemeral_embed("Action failed", error)
             return JSONResponse(
                 {
                     "type": 7,
-                    "data": {"embeds": [updated_embed("declined")], "components": []},
+                    "data": {"embeds": [embed], "components": []},
                 }
             )
 

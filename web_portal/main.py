@@ -1950,7 +1950,8 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         }
     )
     uname = html.escape(f"{user['username']}#{user.get('discriminator','0')}")
-    ban_reason = html.escape(ban.get("reason", "No reason provided."))
+    raw_ban_reason = ban.get("reason") or "No reason provided."
+    ban_reason = html.escape(raw_ban_reason)
     cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
     message_cache_html = ""
     if message_cache:

@@ -38,7 +38,7 @@ DISCORD_BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_PUBLIC_KEY = os.getenv("DISCORD_PUBLIC_KEY")  # Required for interaction verification
 TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "0")
 MODERATOR_ROLE_ID = int(os.getenv("MODERATOR_ROLE_ID", "1353068159346671707"))
-APPEAL_CHANNEL_ID = int(os.getenv("APPEAL_CHANNEL_ID", "1352973388334764112"))
+APPEAL_CHANNEL_ID = int(os.getenv("APPEAL_CHANNEL_ID", "1449872679698960517"))
 APPEAL_LOG_CHANNEL_ID = int(os.getenv("APPEAL_LOG_CHANNEL_ID", "1353445286457901106"))
 AUTH_LOG_CHANNEL_ID = int(os.getenv("AUTH_LOG_CHANNEL_ID", "1449822248490762421"))
 SECRET_KEY = os.getenv("PORTAL_SECRET_KEY") or secrets.token_hex(16)
@@ -1977,7 +1977,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         <div class="form-card">
           <div class="badge">Window: {max(1, window_remaining // 60)} minutes left</div>
           <h2 style="margin:8px 0;">Appeal your BlockSpin ban</h2>
-          <p class="muted">One appeal per ban. Include context, evidence, and what you will change.</p>
+          <p class="muted">One appeal per ban. Include context, evidence, and more.</p>
           <form class="form" action="/submit" method="post">
             <input type="hidden" name="session" value="{html.escape(session)}" />
             <div class="field">
@@ -1990,15 +1990,11 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
             </div>
             <button class="btn" type="submit">Submit appeal</button>
           </form>
-          <div class="callout" style="margin-top:10px;">We keep you signed in so you can check your appeal status without re-authenticating.</div>
         </div>
         <div class="card">
           <h2>{strings['ban_details']}</h2>
           <p class="muted"><strong>User:</strong> {uname}</p>
           <p class="muted"><strong>Ban reason:</strong> {ban_reason}</p>
-          <div style="margin-top:12px;">
-            <h3 style="margin:0 0 6px;">{strings['messages_header']}</h3>
-            {message_cache_html}
           </div>
           <div style="margin-top:12px;">
             <h3 style="margin:0 0 6px;">Your history</h3>

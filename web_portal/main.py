@@ -699,7 +699,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
           </div>
           <div class="footer">© {year} BlockSpin • Secure Appeals</div>
         </div>
-        {f\"<script nonce='{script_nonce}'>{script_block}</script>\" if script_block else \"\"}
+        {f"<script nonce='{script_nonce}'>{script_block}</script>" if script_block else ""}
       </body>
     </html>
     """

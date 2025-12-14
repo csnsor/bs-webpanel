@@ -107,205 +107,176 @@ PERSIST_SESSION_SECONDS = int(os.getenv("PERSIST_SESSION_SECONDS", str(7 * 24 * 
 SESSION_COOKIE_NAME = "bs_session"
 
 BASE_STYLES = """
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 :root {
-  --bg: #0b0d10;
-  --panel: #11151b;
-  --card: #11151b;
-  --border: rgba(255,255,255,.08);
-  --text: #e6e9ef;
-  --muted: #9aa3b2;
-  --accent: #7c5cff;
-  --accent-2: #7af7c8;
-  --danger: #ff5c6c;
-  --success: #7ef2c1;
-  --radius: 16px;
+  --bg: #090a0e;
+  --card-bg: rgba(20, 23, 30, 0.65);
+  --border: rgba(255,255,255,0.08);
+  --text: #edf2f7;
+  --muted: #8b949e;
+  --accent: #5865F2;
+  --accent-hover: #4752c4;
+  --accent-glow: rgba(88, 101, 242, 0.4);
+  --danger: #ed4245;
+  --success: #3ba55c;
+  --radius: 12px;
 }
+
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+
 body {
   margin: 0;
-  font-family: "DM Sans", "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
-  background: var(--bg);
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background-color: var(--bg);
   color: var(--text);
+  background-image:
+    radial-gradient(circle at 15% 15%, rgba(88, 101, 242, 0.12) 0%, transparent 40%),
+    radial-gradient(circle at 85% 85%, rgba(237, 66, 69, 0.08) 0%, transparent 40%);
+  background-attachment: fixed;
   display: grid;
   place-items: center;
-  padding: 28px 16px 60px;
+  min-height: 100vh;
+  padding: 20px;
 }
+
 .app {
-  width: min(1120px, 96vw);
+  width: 100%;
+  max-width: 920px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 24px;
+  animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
-.brand-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
+
+/* --- Branding --- */
+.brand-row { display: flex; justify-content: space-between; align-items: center; padding: 0 4px; }
+.brand { display: flex; align-items: center; gap: 16px; }
 .logo {
-  width: 42px;
-  height: 42px;
+  width: 44px; height: 44px;
+  background: linear-gradient(135deg, var(--accent), #7c5cff);
   border-radius: 12px;
-  display: grid;
-  place-items: center;
-  background: linear-gradient(135deg, rgba(124,92,255,.35), rgba(124,92,255,.15));
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  display: grid; place-items: center;
+  font-weight: 800; font-size: 20px; color: white;
+  box-shadow: 0 8px 20px -6px var(--accent-glow);
 }
-.brand h1 { margin: 0; font-size: 15px; }
-.brand span { font-size: 12px; color: var(--muted); }
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  border-radius: 999px;
-  background: rgba(124,92,255,.12);
-  border: 1px solid rgba(124,92,255,.25);
-  color: var(--accent);
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 14px;
-}
-.hero {
-  background: linear-gradient(135deg, rgba(124,92,255,.12), rgba(124,92,255,.05));
-  border: 1px solid rgba(124,92,255,.25);
-  border-radius: var(--radius);
-  padding: 24px;
-  display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
-  gap: 16px;
-  align-items: center;
-}
-.hero h1 { font-size: 2rem; margin: 0 0 10px; letter-spacing: -0.02em; }
-.hero .lead { color: var(--muted); line-height: 1.6; margin: 0 0 12px; }
+.brand-text h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+.brand-text span { font-size: 13px; color: var(--muted); font-weight: 500; }
+
+/* --- Cards --- */
 .card {
-  background: var(--card);
+  background: var(--card-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  padding: 32px;
+  box-shadow: 0 4px 24px -1px rgba(0,0,0,0.2);
 }
-.card h2 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
-.muted { color: var(--muted); font-size: 14px; }
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 12px 16px;
-  border-radius: 14px;
-  border: 1px solid rgba(124,92,255,.45);
-  background: linear-gradient(135deg, rgba(124,92,255,.35), rgba(124,92,255,.15));
-  color: var(--text);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  text-decoration: none;
-  cursor: pointer;
-  transition: border-color .15s ease, transform .15s ease;
+
+.hero {
+  padding: 40px;
+  background: linear-gradient(180deg, rgba(88,101,242,0.08) 0%, transparent 100%);
+  border: 1px solid rgba(88,101,242,0.2);
 }
-.btn:hover { transform: translateY(-1px); border-color: rgba(124,92,255,.7); }
-.btn.secondary {
-  background: rgba(255,255,255,.04);
-  border-color: var(--border);
-}
-.btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
-.btn-row.tight { flex-wrap: nowrap; gap: 10px; }
-.status {
-  font-size: 13px;
-  color: var(--muted);
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  background: rgba(255,255,255,.02);
-}
-.status.danger { border-color: rgba(255,92,108,.35); color: var(--danger); }
-.status.success { border-color: rgba(126,242,193,0.35); color: var(--success); }
-.field { text-align: left; margin-bottom: 12px; }
-.field label { display: block; font-weight: 700; margin-bottom: 6px; }
+.hero h1 { font-size: 32px; margin: 0 0 16px; letter-spacing: -0.03em; line-height: 1.1; }
+.hero p { font-size: 17px; line-height: 1.6; color: var(--muted); max-width: 600px; margin: 0 0 24px; }
+
+/* --- Forms --- */
+.grid-2 { display: grid; grid-template-columns: 1.3fr 0.7fr; gap: 20px; }
+@media(max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+
+.field { margin-bottom: 20px; }
+.field label { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; letter-spacing: 0.04em; }
+
 input[type=text], textarea {
   width: 100%;
-  border-radius: 12px;
+  background: rgba(0,0,0,0.25);
   border: 1px solid var(--border);
-  background: #0d1322;
-  color: var(--text);
-  padding: 11px;
-  font-size: 0.97rem;
+  border-radius: 8px;
+  padding: 14px;
+  font-size: 15px;
+  color: white;
+  font-family: inherit;
+  transition: all 0.2s ease;
 }
-textarea { resize: vertical; min-height: 140px; }
-.form-card { padding: 16px; background: #0d1322; border: 1px solid var(--border); border-radius: var(--radius); }
-.badge { display: inline-block; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); font-size: 0.85rem; }
-.history-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
-.history-item { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: #0c111d; }
-.history-item .meta { color: var(--muted); font-size: 0.9rem; }
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 10px;
-  font-size: 0.85rem;
-  background: rgba(255,255,255,0.04);
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: rgba(0,0,0,0.4);
+  box-shadow: 0 0 0 4px var(--accent-glow);
+}
+textarea { resize: vertical; min-height: 140px; line-height: 1.5; }
+
+/* --- Buttons --- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 12px 24px;
+  background: var(--accent);
+  color: white;
+  font-weight: 600;
+  border-radius: 8px;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 14px;
+}
+.btn:hover { background: var(--accent-hover); transform: translateY(-2px); box-shadow: 0 6px 20px -4px var(--accent-glow); }
+.btn:active { transform: translateY(0); }
+
+.btn.secondary {
+  background: transparent;
   border: 1px solid var(--border);
+  color: var(--muted);
+  box-shadow: none;
 }
-.status-chip.accepted { color: var(--success); border-color: rgba(126,242,193,0.4); }
-.status-chip.declined { color: var(--danger); border-color: rgba(255,138,138,0.4); }
-.status-chip.pending { color: var(--accent); border-color: rgba(124,92,255,0.4); }
-.callout { border: 1px dashed rgba(124,92,255,0.35); border-radius: 12px; padding: 10px; color: var(--muted); background: rgba(124,92,255,0.06); }
-.timeline { display: grid; gap: 8px; margin-top: 8px; }
-.timeline .step { border-left: 3px solid var(--border); padding-left: 10px; color: var(--muted); }
-.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
-.footer { font-size: 12px; color: var(--muted); text-align: center; padding: 4px 0 0; }
-.icon-error {
-  width: 48px;
-  height: 48px;
-  margin: 0 auto 4px;
-  border-radius: 14px;
-  display: grid;
-  place-items: center;
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--danger);
-  background: rgba(255,92,108,.12);
-  border: 1px solid rgba(255,92,108,.35);
+.btn.secondary:hover { border-color: var(--text); color: var(--text); transform: translateY(-2px); }
+
+.btn-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+
+/* --- Badges & Chips --- */
+.user-chip {
+  display: flex; align-items: center; gap: 12px;
+  background: rgba(255,255,255,0.03);
+  padding: 6px 16px 6px 6px;
+  border-radius: 50px;
+  border: 1px solid var(--border);
+  transition: border-color 0.2s;
 }
-.error-box {
-  font-size: 13px;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(255,92,108,.35);
-  background: rgba(255,92,108,.08);
-  color: #ffd9dd;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  word-break: break-word;
-}
-.user-chip { display:flex; align-items:center; gap:10px; padding:6px 10px; border:1px solid var(--border); border-radius:12px; background: rgba(255,255,255,0.03); }
-.user-chip img { width:32px; height:32px; border-radius:50%; object-fit:cover; background: #0d1322; border:1px solid var(--border); }
-.user-chip .name { font-weight:700; font-size:13px; color: var(--text); }
-.user-chip .actions { display:flex; gap:6px; }
-.user-chip a { color: var(--muted); font-size:12px; text-decoration:none; }
+.user-chip:hover { border-color: rgba(255,255,255,0.2); }
+.user-chip img { width: 32px; height: 32px; border-radius: 50%; object-fit: cover; }
+.user-chip .name { font-size: 14px; font-weight: 600; }
+.user-chip a { font-size: 12px; color: var(--muted); text-decoration: none; margin-left: auto; }
 .user-chip a:hover { color: var(--accent); }
-.live-status { margin-top:10px; }
-.live-status .label { display:block; font-weight:700; margin-bottom:4px; }
-.live-status .value { color: var(--muted); font-size:13px; }
-.live-chip { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:10px; border:1px solid var(--border); background: rgba(255,255,255,0.04); font-size:12px; }
-.live-chip.accepted { border-color: rgba(126,242,193,0.4); color: var(--success); }
-.live-chip.declined { border-color: rgba(255,138,138,0.4); color: var(--danger); }
-.live-chip.pending { border-color: rgba(124,92,255,0.4); color: var(--accent); }
-@media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
-@media (max-width: 640px) { .btn-row.tight { flex-wrap: wrap; } }
+
+.badge {
+  display: inline-block; padding: 4px 10px; border-radius: 6px;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+  background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--muted);
+  margin-bottom: 12px;
+}
+
+/* --- Status Lists --- */
+.history-item {
+  background: rgba(0,0,0,0.2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.history-item .status-chip { margin-bottom: 6px; }
+.status-chip { display: inline-flex; font-size: 12px; font-weight: 600; padding: 4px 8px; border-radius: 4px; width: fit-content; }
+.status-chip.accepted { color: #4ade80; background: rgba(74, 222, 128, 0.1); }
+.status-chip.declined { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+.status-chip.pending { color: #818cf8; background: rgba(129, 140, 248, 0.1); }
+
+.footer { margin-top: 30px; font-size: 13px; color: var(--muted); opacity: 0.6; text-align: center; }
 """
 
 LANG_STRINGS = {
@@ -637,10 +608,11 @@ def render_history_items(history: List[dict]) -> str:
         appeal_reason = html.escape(item.get("appeal_reason") or "No appeal reason captured.")
         ban_reason = html.escape(item.get("ban_reason") or "No ban reason recorded.")
         created_at = html.escape(str(item.get("created_at") or ""))
+        status_label = html.escape(status.title())
         items.append(
             f"""
             <li class="history-item">
-              <div class="status-chip {status_class}">{status.title()}</div>
+              <div class="status-chip {status_class}">{status_label}</div>
               <div class="meta">Reference: {html.escape(item.get("appeal_id") or '-')}</div>
               <div class="meta">Submitted: {created_at}</div>
               <div class="meta">Ban reason: {ban_reason}</div>
@@ -659,23 +631,29 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     toggle_label = strings.get("language_switch", "Switch language")
     user_chip = strings.get("user_chip", "")
     script_block = strings.get("script_block")
+    script_nonce = strings.get("script_nonce") or secrets.token_urlsafe(12)
+    avatar_fix_script = """
+    document.addEventListener("DOMContentLoaded", function() {
+        document.querySelectorAll('.user-chip img').forEach(img => {
+            img.onerror = function() {
+                this.onerror = null;
+                this.src = 'https://cdn.discordapp.com/embed/avatars/0.png';
+            };
+        });
+    });
+    """
     csp = (
         "default-src 'self'; "
         "img-src 'self' data: https://*.discordapp.com https://*.discord.com; "
-        "style-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
         "script-src 'self' 'unsafe-inline'; "
         "connect-src 'self' https://discord.com https://*.discord.com; "
     )
-    favicon = (
-        "data:image/svg+xml,"
-        "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E"
-        "%3Crect width='64' height='64' rx='12' fill='%2311161f'/%3E"
-        "%3Cpath d='M42 10 28 24l4 4-6 6 4 4-6 6-6-6 6-6-4-4 6-6 4 4 6-6 4 4 6-6-10-10Z' fill='%237c5cff'/%3E"
-        "%3Cpath d='M46 34h8v8a6 6 0 0 1-6 6h-8v-8a6 6 0 0 1 6-6Z' fill='%237af7c8'/%3E"
-        "%3C/svg%3E"
-    )
+    favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%235865F2'/%3E%3Cpath d='M42 10 28 24l4 4-6 6 4 4-6 6-6-6 6-6-4-4 6-6 4 4 6-6 4 4 6-6-10-10Z' fill='white'/%3E%3C/svg%3E"
     return f"""
-    <html>
+    <!DOCTYPE html>
+    <html lang="{lang}">
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -686,23 +664,32 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
       </head>
       <body>
         <div class="app">
+          
           <div class="brand-row">
             <div class="brand">
               <div class="logo">BS</div>
-              <div>
+              <div class="brand-text">
                 <h1>BlockSpin</h1>
-                <span>Discord Ban Appeals</span>
+                <span>Appeals Portal</span>
               </div>
             </div>
             {user_chip}
           </div>
+
           {body_html}
-          <div class="btn-row" style="justify-content:flex-end; gap:6px;">
-            <a class="btn secondary" style="padding:8px 12px;font-size:12px;" href="?lang={toggle_lang}">{toggle_label}</a>
+
+          <div class="footer">
+            <div>&copy; {year} BlockSpin Community</div>
+            <div style="margin-top:8px;">
+              <a href="?lang={toggle_lang}" style="color:inherit; text-decoration:none; border-bottom:1px dotted #555;">{toggle_label}</a>
+            </div>
           </div>
-          <div class="footer">© {year} BlockSpin • Secure Appeals</div>
         </div>
-        {f"<script>{script_block}</script>" if script_block else ""}
+        
+        <script nonce="{script_nonce}">
+            {avatar_fix_script}
+            {script_block or ""}
+        </script>
       </body>
     </html>
     """
@@ -744,7 +731,7 @@ def build_user_chip(session: Optional[dict]) -> str:
             avatar = default_img
     return f"""
       <div class="user-chip">
-        <img src="{html.escape(avatar)}" alt="avatar" onerror="this.src='{default_img}'" />
+        <img src="{html.escape(avatar)}" alt="avatar" class="avatar-img" />
         <div class="name">{html.escape(name)}</div>
         <div class="actions"><a href="/logout">Logout</a></div>
       </div>
@@ -829,6 +816,8 @@ def validate_state_token(token: str, ip: str) -> bool:
 def enforce_ip_rate_limit(ip: str):
     now = time.time()
     window_start = now - APPEAL_IP_WINDOW_SECONDS
+    if len(_ip_requests) > 10000:
+        _ip_requests.clear()
     bucket = _ip_requests.setdefault(ip, [])
     bucket = [t for t in bucket if t >= window_start]
     if len(bucket) >= APPEAL_IP_MAX_REQUESTS:
@@ -1041,6 +1030,8 @@ async def post_appeal_embed(
             headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
             json={"embeds": [embed], "components": components},
         )
+        if resp.status_code == 429:
+            raise HTTPException(status_code=429, detail="Discord is rate limiting. Please retry in a minute.")
         resp.raise_for_status()
 
 
@@ -1075,23 +1066,28 @@ async def home(request: Request, lang: Optional[str] = None):
     status_button = "" if user_session else f'<a class="btn secondary" href="/status">{strings["status_cta"]}</a>'
 
     content = f"""
-      <div class="hero">
-        <div>
-          <h1>{strings['hero_title']}</h1>
-          <p class="lead" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{strings['hero_sub']}</p>
-          <div class="btn-row tight">
-            {review_button}
-            {status_button}
-            <a class="btn secondary" href="/tos">Terms of Service</a>
-            <a class="btn secondary" href="/privacy">Privacy</a>
-          </div>
-          <div class="status live-status" id="live-status">
-            <span class="label">Live status</span>
-            <span class="value"><span class="live-chip pending" id="live-chip">Waiting...</span></span>
-          </div>
+      <div class="card hero">
+        <div class="badge">Official Portal</div>
+        <h1>{strings['hero_title']}</h1>
+        <p>{strings['hero_sub']}</p>
+        
+        <div class="btn-row">
+           {review_button}
+           {status_button}
+        </div>
+
+        <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 12px;">
+            <div id="live-status" style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted);">
+                <span style="display: block; width: 8px; height: 8px; background: #3ba55c; border-radius: 50%; box-shadow: 0 0 8px #3ba55c;"></span>
+                <span class="value">System Online</span>
+            </div>
+            <div style="margin-left: auto; font-size: 13px;">
+                <a href="/tos" style="color: var(--muted); text-decoration: none; margin-right: 12px;">Terms</a>
+                <a href="/privacy" style="color: var(--muted); text-decoration: none;">Privacy</a>
+            </div>
         </div>
       </div>
-      {""
+      {"" 
       if not user_session
       else f"""
       <div class="card">
@@ -1106,7 +1102,7 @@ async def home(request: Request, lang: Optional[str] = None):
     (function() {{
       const el = document.getElementById('live-status');
       if (!el) return;
-      const chip = document.getElementById('live-chip');
+      const valEl = el.querySelector('.value');
       async function tick() {{
         try {{
           const res = await fetch('/status/data', {{ headers: {{ 'Accept': 'application/json' }} }});
@@ -1114,18 +1110,15 @@ async def home(request: Request, lang: Optional[str] = None):
           const data = await res.json();
           const history = data.history || [];
           if (!history.length) {{
-            chip.textContent = 'No appeals yet.';
-            chip.className = 'live-chip pending';
+            valEl.textContent = 'No appeals yet.';
             return;
           }}
           const latest = history[0];
           const status = latest.status || 'pending';
           const ref = latest.appeal_id || 'n/a';
-          chip.textContent = status + ' • ref ' + ref;
-          chip.className = 'live-chip ' + (status.toLowerCase().startsWith('accept') ? 'accepted' : status.toLowerCase().startsWith('decline') ? 'declined' : 'pending');
+          valEl.textContent = status + ' • ref ' + ref;
         }} catch (e) {{
-          chip.textContent = 'Live updates unavailable.';
-          chip.className = 'live-chip pending';
+          valEl.textContent = 'Live updates unavailable.';
         }}
       }}
       tick();
@@ -1372,7 +1365,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
           <h2 style="margin:8px 0;">Appeal your BlockSpin ban</h2>
           <p class="muted">One appeal per ban. Include context, evidence, and what you will change.</p>
           <form class="form" action="/submit" method="post">
-            <input type="hidden" name="session" value="{session}" />
+            <input type="hidden" name="session" value="{html.escape(session)}" />
             <div class="field">
               <label for="evidence">Ban evidence (optional)</label>
               <input name="evidence" type="text" placeholder="Links or notes you have" />
@@ -1420,6 +1413,11 @@ async def submit(
         raise HTTPException(status_code=400, detail="Invalid session")
 
     now = time.time()
+
+    if len(appeal_reason or "") > 2000:
+        raise HTTPException(status_code=400, detail="Appeal reason too long. Please keep it under 2000 characters.")
+    if len(evidence or "") > 1500:
+        raise HTTPException(status_code=400, detail="Evidence too long. Please keep it concise.")
 
     token_hash = hash_value(session)
     # Session expiry + single-use guard
@@ -1505,7 +1503,7 @@ async def submit(
     success = f"""
       <div class="card">
         <h1>Appeal submitted</h1>
-        <p>Reference ID: <strong>{appeal_id}</strong></p>
+        <p>Reference ID: <strong>{html.escape(appeal_id)}</strong></p>
         <p class="muted">We will review your appeal shortly. You will be notified in Discord.</p>
         <a class="btn" href="/">Back home</a>
       </div>

@@ -340,3 +340,4 @@ async def logout(request: Request):
     response = RedirectResponse(url="/", status_code=302)
     response.delete_cookie("bs_session")
     return response
+

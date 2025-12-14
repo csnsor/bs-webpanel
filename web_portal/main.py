@@ -50,13 +50,6 @@ INVITE_LINK = "https://discord.gg/blockspin"
 MESSAGE_CACHE_GUILD_IDS_RAW = os.getenv("MESSAGE_CACHE_GUILD_ID", "1337420081382297682")
 READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
-MESSAGE_CACHE_GUILD_IDS = {
-    gid.strip()
-    for gid in MESSAGE_CACHE_GUILD_IDS_RAW.split(",")
-    if gid.strip()
-}
-if not MESSAGE_CACHE_GUILD_IDS:
-    MESSAGE_CACHE_GUILD_IDS = None
 
 OAUTH_SCOPES = "identify guilds.join"
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -170,6 +163,14 @@ _message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
 _recent_message_context: Dict[str, Tuple[List[dict], float]] = {}
 RECENT_MESSAGE_CACHE_TTL = int(os.getenv("RECENT_MESSAGE_CACHE_TTL", "120"))
 
+MESSAGE_CACHE_GUILD_IDS = {
+    gid.strip()
+    for gid in MESSAGE_CACHE_GUILD_IDS_RAW.split(",")
+    if gid.strip()
+}
+if not MESSAGE_CACHE_GUILD_IDS:
+    MESSAGE_CACHE_GUILD_IDS = None
+
 
 def uid(value: Any) -> str:
     return str(value)
@@ -220,22 +221,27 @@ if discord:
         _recent_message_context[user_id] = (list(_message_buffer[user_id]), time.time())
         await maybe_snapshot_messages(user_id, message.guild.id)
 
-    @bot_client.event
-    async def on_member_ban(guild, user):
-        user_id = uid(user.id)
-        logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
-        cached_msgs = []
-        if is_supabase_ready():
-            try:
-                recs = await supabase_request(
-                    "get",
-                    "user_message_snapshots",
-                    params={"user_id": f"eq.{user_id}", "limit": 1},
-                )
-                if recs and recs[0].get("messages"):
-                    cached_msgs = recs[0]["messages"]
-            except Exception as exc:
-                logging.warning("Failed to read snapshots for %s: %s", user_id, exc)
+@bot_client.event
+async def on_member_ban(guild, user):
+    user_id = uid(user.id)
+    if not should_track_messages(guild.id):
+        return
+    logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
+    buffer_copy = list(_message_buffer.get(user_id, []))
+    if buffer_copy:
+        await persist_message_snapshot(user_id, buffer_copy)
+    cached_msgs = []
+    if is_supabase_ready():
+        try:
+            recs = await supabase_request(
+                "get",
+                "user_message_snapshots",
+                params={"user_id": f"eq.{user_id}", "limit": 1},
+            )
+            if recs and recs[0].get("messages"):
+                cached_msgs = recs[0]["messages"]
+        except Exception as exc:
+            logging.warning("Failed to read snapshots for %s: %s", user_id, exc)
         if not cached_msgs:
             cached_msgs = list(_message_buffer.get(user_id, []))
         if cached_msgs:
@@ -1450,13 +1456,17 @@ async def maybe_snapshot_messages(user_id: str, guild_id: str):
 async def persist_message_snapshot(user_id: str, messages: List[dict]):
     if not is_supabase_ready() or not messages:
         return
-    await supabase_request(
-        "post",
-        "user_message_snapshots",
-        params={"on_conflict": "user_id"},
-        payload={"user_id": user_id, "messages": messages[-15:]},
-        prefer="resolution=merge-duplicates",
-    )
+    logging.info("Persisting %d messages for user %s", len(messages[-15:]), user_id)
+    try:
+        await supabase_request(
+            "post",
+            "user_message_snapshots",
+            params={"on_conflict": "user_id"},
+            payload={"user_id": user_id, "messages": messages[-15:]},
+            prefer="resolution=merge-duplicates",
+        )
+    except Exception as exc:
+        logging.warning("Snapshot persist failed for %s: %s", user_id, exc)
 
 async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
     """Fetch ban context cached by the bot and stored in Supabase; keep for reuse."""

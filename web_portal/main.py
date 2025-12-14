@@ -38,7 +38,7 @@ DISCORD_BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_PUBLIC_KEY = os.getenv("DISCORD_PUBLIC_KEY")  # Required for interaction verification
 TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "0")
 MODERATOR_ROLE_ID = int(os.getenv("MODERATOR_ROLE_ID", "1353068159346671707"))
-APPEAL_CHANNEL_ID = int(os.getenv("APPEAL_CHANNEL_ID", "1449872679698960517"))
+APPEAL_CHANNEL_ID = int(os.getenv("APPEAL_CHANNEL_ID", "1352973388334764112"))
 APPEAL_LOG_CHANNEL_ID = int(os.getenv("APPEAL_LOG_CHANNEL_ID", "1353445286457901106"))
 AUTH_LOG_CHANNEL_ID = int(os.getenv("AUTH_LOG_CHANNEL_ID", "1449822248490762421"))
 SECRET_KEY = os.getenv("PORTAL_SECRET_KEY") or secrets.token_hex(16)
@@ -235,22 +235,16 @@ if discord:
 async def on_member_ban(guild, user):
     user_id = uid(user.id)
     if not should_track_messages(guild.id):
-        if DEBUG_EVENTS:
-            print(f"[DEBUG] Ignoring ban from guild {guild.id} (Not in allowlist)")
         return
 
     logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
     cached_msgs = list(_message_buffer.get(user_id, []))
 
-    if DEBUG_EVENTS:
-        print(f"[DEBUG] Found {len(cached_msgs)} messages in RAM for {user.name}.")
     if cached_msgs and is_supabase_ready():
-        if DEBUG_EVENTS:
-            print(f"[DEBUG] Attempting to write to Supabase table '{SUPABASE_CONTEXT_TABLE}'...")
         try:
             await supabase_request(
                 "post",
-                SUPABASE_CONTEXT_TABLE,
+                "banned_user_context",
                 params={"on_conflict": "user_id"},
                 payload={
                     "user_id": user_id,
@@ -260,14 +254,8 @@ async def on_member_ban(guild, user):
                 prefer="resolution=merge-duplicates",
             )
             logging.info("Saved %d messages to Supabase for %s", len(cached_msgs), user_id)
-            if DEBUG_EVENTS:
-                print(f"[DEBUG] Supabase Write Result: success for {user_id}")
         except Exception as exc:
             logging.warning("Failed to store banned context for %s: %s", user_id, exc)
-            if DEBUG_EVENTS:
-                print(f"[DEBUG] CRITICAL SUPABASE ERROR: {exc}")
-    elif DEBUG_EVENTS:
-        print("[DEBUG] Supabase credentials missing/invalid or no messages to send.")
 
     _message_buffer.pop(user_id, None)
     _recent_message_context.pop(user_id, None)
@@ -1950,8 +1938,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         }
     )
     uname = html.escape(f"{user['username']}#{user.get('discriminator','0')}")
-    raw_ban_reason = ban.get("reason") or "No reason provided."
-    ban_reason = html.escape(raw_ban_reason)
+    ban_reason = html.escape(ban.get("reason", "No reason provided."))
     cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
     message_cache_html = ""
     if message_cache:
@@ -1977,7 +1964,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         <div class="form-card">
           <div class="badge">Window: {max(1, window_remaining // 60)} minutes left</div>
           <h2 style="margin:8px 0;">Appeal your BlockSpin ban</h2>
-          <p class="muted">One appeal per ban. Include context, evidence, and more.</p>
+          <p class="muted">One appeal per ban. Include context, evidence, and what you will change.</p>
           <form class="form" action="/submit" method="post">
             <input type="hidden" name="session" value="{html.escape(session)}" />
             <div class="field">
@@ -1990,11 +1977,15 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
             </div>
             <button class="btn" type="submit">Submit appeal</button>
           </form>
+          <div class="callout" style="margin-top:10px;">We keep you signed in so you can check your appeal status without re-authenticating.</div>
         </div>
         <div class="card">
           <h2>{strings['ban_details']}</h2>
           <p class="muted"><strong>User:</strong> {uname}</p>
           <p class="muted"><strong>Ban reason:</strong> {ban_reason}</p>
+          <div style="margin-top:12px;">
+            <h3 style="margin:0 0 6px;">{strings['messages_header']}</h3>
+            {message_cache_html}
           </div>
           <div style="margin-top:12px;">
             <h3 style="margin:0 0 6px;">Your history</h3>

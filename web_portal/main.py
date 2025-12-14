@@ -1569,13 +1569,13 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     # Build the complete HTML page
     return f"""
     <!DOCTYPE html>
-    <html lang="{lang}">
+    <html lang="{html.escape(lang)}">
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>{html.escape(title)} - {strings.get("site_title", "BlockSpin Appeals Portal")}</title>
+        <title>{html.escape(title)} - {html.escape(strings.get("site_title", "BlockSpin Appeals Portal"))}</title>
         <link rel="icon" type="image/svg+xml" href="{favicon}">
-        <meta http-equiv="Content-Security-Policy" content="{csp}">
+        <meta http-equiv="Content-Security-Policy" content="{html.escape(csp)}">
         <style>{BASE_STYLES}</style>
       </head>
       <body>
@@ -1594,27 +1594,27 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
           {body_html}
 
           <div class="footer">
-            <div>{strings.get("footer_copyright", "").format(year=year)}</div>
+            <div>{html.escape(strings.get("footer_copyright", "").format(year=year))}</div>
             <div style="margin-top:8px;">
-              <a href="/privacy" style="margin-right: 15px;">{strings.get("footer_privacy", "Privacy Policy")}</a>
-              <a href="/terms">{strings.get("footer_terms", "Terms of Service")}</a>
+              <a href="/privacy" style="margin-right: 15px;">{html.escape(strings.get("footer_privacy", "Privacy Policy"))}</a>
+              <a href="/terms">{html.escape(strings.get("footer_terms", "Terms of Service"))}</a>
               <span style="margin: 0 10px;">•</span>
-              <a href="?lang={toggle_lang}">{toggle_label}</a>
+              <a href="?lang={html.escape(toggle_lang)}">{html.escape(toggle_label)}</a>
             </div>
           </div>
         </div>
         
         <script nonce="{script_nonce}">
           // Add any client-side functionality here
-          document.addEventListener('DOMContentLoaded', function() {
+          document.addEventListener('DOMContentLoaded', function() {{
             // Add fade-in animation to cards
             const cards = document.querySelectorAll('.card');
-            cards.forEach((card, index) => {
-              setTimeout(() => {
+            cards.forEach((card, index) => {{
+              setTimeout(() => {{
                 card.classList.add('fade-in');
-              }, index * 100);
-            });
-          });
+              }}, index * 100);
+            }});
+          }});
         </script>
       </body>
     </html>

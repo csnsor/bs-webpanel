@@ -6,6 +6,7 @@ import time
 import html
 import copy
 import hashlib
+import json
 from datetime import datetime, timezone
 from collections import deque, defaultdict
 from typing import Optional, Tuple, Dict, List, Any
@@ -154,6 +155,8 @@ SESSION_COOKIE_NAME = "bs_session"
 # --- Bot & Cache Setup ---
 bot_client = None
 _message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
+_recent_message_context: Dict[str, Tuple[List[dict], float]] = {}
+RECENT_MESSAGE_CACHE_TTL = int(os.getenv("RECENT_MESSAGE_CACHE_TTL", "120"))
 
 if discord:
     intents = discord.Intents.default()
@@ -190,6 +193,7 @@ if discord:
         logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
         cached_msgs = list(_message_buffer.get(user_id, []))
         if cached_msgs and is_supabase_ready():
+            _recent_message_context[user_id] = (list(cached_msgs), time.time())
             try:
                 await supabase_request(
                     "post",
@@ -1452,6 +1456,7 @@ async def status_page(request: Request, lang: Optional[str] = None):
     ip = get_client_ip(request)
     asyncio.create_task(send_log_message(f"[visit_status] ip_hash={hash_ip(ip)} lang={current_lang}"))
     session = read_user_session(request)
+    session, session_refreshed = await refresh_session_profile(session)
     strings = dict(strings)
     strings["user_chip"] = build_user_chip(session)
     if not session:
@@ -1486,6 +1491,14 @@ async def status_page(request: Request, lang: Optional[str] = None):
       </div>
     """
     resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
+    if session and session_refreshed:
+        persist_user_session(
+            resp,
+            session["uid"],
+            session.get("uname") or "",
+            display_name=session.get("display_name"),
+            avatar_url=session.get("avatar_url"),
+        )
     resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
     return resp
 

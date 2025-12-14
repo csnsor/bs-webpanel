@@ -300,6 +300,10 @@ textarea { resize: vertical; min-height: 140px; }
 .live-status { margin-top:10px; }
 .live-status .label { display:block; font-weight:700; margin-bottom:4px; }
 .live-status .value { color: var(--muted); font-size:13px; }
+.live-chip { display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:10px; border:1px solid var(--border); background: rgba(255,255,255,0.04); font-size:12px; }
+.live-chip.accepted { border-color: rgba(126,242,193,0.4); color: var(--success); }
+.live-chip.declined { border-color: rgba(255,138,138,0.4); color: var(--danger); }
+.live-chip.pending { border-color: rgba(124,92,255,0.4); color: var(--accent); }
 @media (max-width: 900px) { .hero { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .btn-row.tight { flex-wrap: wrap; } }
 """
@@ -658,7 +662,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     script_nonce = strings.get("script_nonce")
     base_csp = (
         "default-src 'self'; "
-        "img-src 'self' data: https://cdn.discordapp.com https://media.discordapp.net; "
+        "img-src 'self' data: https://*.discordapp.com https://*.discord.com; "
         "style-src 'self' 'unsafe-inline'; "
         "connect-src 'self' https://discord.com https://*.discord.com; "
     )
@@ -733,14 +737,15 @@ def build_user_chip(session: Optional[dict]) -> str:
         return ""
     name = clean_display_name(session.get("display_name") or session.get("uname") or "")
     avatar = session.get("avatar_url") or ""
+    default_img = "https://cdn.discordapp.com/embed/avatars/0.png"
     if not avatar:
         try:
             avatar = f"https://cdn.discordapp.com/embed/avatars/{int(session.get('uid','0'))%5}.png"
         except Exception:
-            avatar = "https://cdn.discordapp.com/embed/avatars/0.png"
+            avatar = default_img
     return f"""
       <div class="user-chip">
-        <img src="{html.escape(avatar)}" alt="avatar" />
+        <img src="{html.escape(avatar)}" alt="avatar" onerror="this.src='{default_img}'" />
         <div class="name">{html.escape(name)}</div>
         <div class="actions"><a href="/logout">Logout</a></div>
       </div>
@@ -1053,6 +1058,12 @@ async def home(request: Request, lang: Optional[str] = None):
     user_chip = build_user_chip(user_session)
     strings = dict(strings)
     strings["user_chip"] = user_chip
+    history_html = ""
+    if user_session and is_supabase_ready():
+        history = await fetch_appeal_history(user_session["uid"], limit=5)
+        history_html = render_history_items(history)
+    elif user_session:
+        history_html = "<div class='muted'></div>"
 
     login_button = ""
     if not user_session:
@@ -1077,10 +1088,18 @@ async def home(request: Request, lang: Optional[str] = None):
           </div>
           <div class="status live-status" id="live-status">
             <span class="label">Live status</span>
-            <span class="value">Waiting for updates...</span>
+            <span class="value"><span class="live-chip pending" id="live-chip">Waiting...</span></span>
           </div>
         </div>
       </div>
+      {""
+      if not user_session
+      else f"""
+      <div class="card">
+        <h2>{strings['history_title']}</h2>
+        {history_html}
+      </div>
+      """}
     """
     script_nonce = secrets.token_urlsafe(12)
     strings["script_nonce"] = script_nonce
@@ -1088,7 +1107,7 @@ async def home(request: Request, lang: Optional[str] = None):
     (function() {{
       const el = document.getElementById('live-status');
       if (!el) return;
-      const valueEl = el.querySelector('.value');
+      const chip = document.getElementById('live-chip');
       async function tick() {{
         try {{
           const res = await fetch('/status/data', {{ headers: {{ 'Accept': 'application/json' }} }});
@@ -1096,15 +1115,18 @@ async def home(request: Request, lang: Optional[str] = None):
           const data = await res.json();
           const history = data.history || [];
           if (!history.length) {{
-            valueEl.textContent = 'No appeals yet.';
+            chip.textContent = 'No appeals yet.';
+            chip.className = 'live-chip pending';
             return;
           }}
           const latest = history[0];
           const status = latest.status || 'pending';
           const ref = latest.appeal_id || 'n/a';
-          valueEl.textContent = 'Latest: ' + status + ' (ref ' + ref + ')';
+          chip.textContent = status + ' • ref ' + ref;
+          chip.className = 'live-chip ' + (status.toLowerCase().startsWith('accept') ? 'accepted' : status.toLowerCase().startsWith('decline') ? 'declined' : 'pending');
         }} catch (e) {{
-          valueEl.textContent = 'Live updates unavailable.';
+          chip.textContent = 'Live updates unavailable.';
+          chip.className = 'live-chip pending';
         }}
       }}
       tick();

@@ -226,43 +226,29 @@ async def on_member_ban(guild, user):
     user_id = uid(user.id)
     if not should_track_messages(guild.id):
         return
+
     logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
-    buffer_copy = list(_message_buffer.get(user_id, []))
-    if buffer_copy:
-        await persist_message_snapshot(user_id, buffer_copy)
-    cached_msgs = []
-    if is_supabase_ready():
+    cached_msgs = list(_message_buffer.get(user_id, []))
+
+    if cached_msgs and is_supabase_ready():
         try:
-            recs = await supabase_request(
-                "get",
-                "user_message_snapshots",
-                params={"user_id": f"eq.{user_id}", "limit": 1},
+            await supabase_request(
+                "post",
+                "banned_user_context",
+                params={"on_conflict": "user_id"},
+                payload={
+                    "user_id": user_id,
+                    "messages": cached_msgs,
+                    "banned_at": int(time.time()),
+                },
+                prefer="resolution=merge-duplicates",
             )
-            if recs and recs[0].get("messages"):
-                cached_msgs = recs[0]["messages"]
+            logging.info("Saved %d messages to Supabase for %s", len(cached_msgs), user_id)
         except Exception as exc:
-            logging.warning("Failed to read snapshots for %s: %s", user_id, exc)
-        if not cached_msgs:
-            cached_msgs = list(_message_buffer.get(user_id, []))
-        if cached_msgs:
-            await persist_message_snapshot(user_id, cached_msgs)
-        if cached_msgs and is_supabase_ready():
-            try:
-                await supabase_request(
-                    "post",
-                    "banned_user_context",
-                    params={"on_conflict": "user_id"},
-                    payload={
-                        "user_id": user_id,
-                        "messages": cached_msgs[:15],
-                        "banned_at": int(time.time()),
-                    },
-                    prefer="resolution=merge-duplicates",
-                )
-            except Exception as exc:
-                logging.warning("Failed to store banned context for %s: %s", user_id, exc)
-        _message_buffer.pop(user_id, None)
-        _recent_message_context.pop(user_id, None)
+            logging.warning("Failed to store banned context for %s: %s", user_id, exc)
+
+    _message_buffer.pop(user_id, None)
+    _recent_message_context.pop(user_id, None)
 
 BASE_STYLES = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -775,18 +761,18 @@ def normalize_language(lang: Optional[str]) -> str:
     return lang or "en"
 
 
-def format_timestamp(value: str) -> str:
+def format_timestamp(value: Any) -> str:
     """Convert various timestamp formats to a friendly label."""
     if not value:
         return ""
     try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except Exception:
-        try:
+        if isinstance(value, str) and "T" in value:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        else:
             dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
-        except Exception:
-            return value
-    return dt.astimezone(timezone.utc).strftime("%b %d, %Y • %H:%M UTC")
+        return dt.astimezone(timezone.utc).strftime("%b %d, %Y • %H:%M UTC")
+    except Exception:
+        return str(value)
 
 
 def hash_value(raw: str) -> str:
@@ -1469,18 +1455,26 @@ async def persist_message_snapshot(user_id: str, messages: List[dict]):
         logging.warning("Snapshot persist failed for %s: %s", user_id, exc)
 
 async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
-    """Fetch ban context cached by the bot and stored in Supabase; keep for reuse."""
+    """Fetch ban context from the permanent ban log in Supabase."""
     if not is_supabase_ready():
         return _get_recent_message_context(user_id, limit)
     try:
         recs = await supabase_request(
             "get",
-            "user_message_snapshots",
+            "banned_user_context",
             params={"user_id": f"eq.{user_id}", "limit": 1},
         )
         if recs and recs[0].get("messages"):
             messages = recs[0]["messages"]
-            return sorted(messages, key=lambda x: x.get("timestamp", 0), reverse=True)[:limit]
+
+            def get_ts(m: dict) -> float:
+                t = m.get("timestamp", 0)
+                try:
+                    return float(t)
+                except Exception:
+                    return 0.0
+
+            return sorted(messages, key=get_ts, reverse=True)[:limit]
     except Exception as exc:
         logging.warning("Failed to fetch context for %s: %s", user_id, exc)
     return _get_recent_message_context(user_id, limit)

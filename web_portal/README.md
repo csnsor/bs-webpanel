@@ -33,5 +33,5 @@ Visit `http://localhost:8000` to start the OAuth flow.
 
 ## Deploy (Railway)
 - Set the env vars above.
-- Set the start command to `uvicorn web_portal.main:app --host 0.0.0.0 --port $PORT`.
+- Set the start command to `python -m web_portal.run` (it reads `PORT` safely).
 - Point the Discord OAuth redirect to `https://bs-appeals.up.railway.app/callback`.

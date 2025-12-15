@@ -12,5 +12,5 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["sh", "-c", "python -m uvicorn web_portal.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
-
+# Use a Python entrypoint so we don't rely on shell expansion for $PORT.
+CMD ["python", "-m", "web_portal.run"]

@@ -827,6 +827,7 @@ a:hover {
   background: var(--card-bg-3);
   box-shadow: var(--shadow-sm);
   padding: var(--space-10);
+  margin-top: var(--space-12);
 }
 
 .card {
@@ -1381,7 +1382,7 @@ textarea:focus {
    ============================================================================= */
 
 .error-box {
-  margin-top: var(--space-4);
+  margin-top: var(--space-10);
   border: 1px solid var(--status-error-border);
   background: var(--status-error-bg);
   border-radius: var(--radius-lg);
@@ -1490,6 +1491,7 @@ textarea:focus {
   gap: var(--space-4);
   color: var(--text-muted);
   font-size: var(--font-base);
+  margin-top: var(--space-16);
 }
 
 .legal a:hover {

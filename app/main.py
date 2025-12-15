@@ -52,6 +52,9 @@ MESSAGE_CACHE_GUILD_IDS_RAW = os.getenv("MESSAGE_CACHE_GUILD_ID", "1337420081382
 READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
 DEBUG_EVENTS = os.getenv("DEBUG_EVENTS", "false").lower() == "true"
+# By default, do not persist rolling message snapshots to Supabase. We keep the last 15 per-user in RAM and only write
+# to Supabase when a ban is detected (banned_user_context).
+ENABLE_MESSAGE_SNAPSHOTS = os.getenv("ENABLE_MESSAGE_SNAPSHOTS", "false").lower() in {"1", "true", "yes", "on"}
 
 OAUTH_SCOPES = "identify guilds.join"
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -148,6 +151,7 @@ _user_tokens: Dict[str, Dict[str, Any]] = {}  # {user_id: {"access_token": str, 
 _processed_appeals: Dict[str, float] = {}  # {appeal_id: timestamp_processed}
 _declined_users: Dict[str, bool] = {}  # {user_id: True if appeal declined}
 _state_tokens: Dict[str, Tuple[str, float]] = {}  # {token: (ip, issued_at)}
+_status_data_cache: Dict[str, Tuple[dict, float]] = {}  # {user_id: (payload, ts)}
 APPEAL_COOLDOWN_SECONDS = int(os.getenv("APPEAL_COOLDOWN_SECONDS", "300"))  # 5 minutes by default
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "900"))  # sessions expire after 15 minutes
 APPEAL_IP_MAX_REQUESTS = int(os.getenv("APPEAL_IP_MAX_REQUESTS", "8"))
@@ -158,6 +162,7 @@ REMOVE_FROM_DM_GUILD_AFTER_DM = os.getenv("REMOVE_FROM_DM_GUILD_AFTER_DM", "true
 CLEANUP_DM_INVITES = os.getenv("CLEANUP_DM_INVITES", "true").lower() == "true"
 PERSIST_SESSION_SECONDS = int(os.getenv("PERSIST_SESSION_SECONDS", str(7 * 24 * 3600)))  # keep users signed in
 SESSION_COOKIE_NAME = "bs_session"
+STATUS_DATA_CACHE_TTL_SECONDS = int(os.getenv("STATUS_DATA_CACHE_TTL_SECONDS", "5"))
 
 # --- Bot & Cache Setup ---
 bot_client = None
@@ -166,20 +171,14 @@ _recent_message_context: Dict[str, Tuple[List[dict], float]] = {}
 RECENT_MESSAGE_CACHE_TTL = int(os.getenv("RECENT_MESSAGE_CACHE_TTL", "120"))
 
 MESSAGE_CACHE_GUILD_IDS = {
-    gid.strip()
-    for gid in MESSAGE_CACHE_GUILD_IDS_RAW.split(",")
-    if gid.strip()
+    (MESSAGE_CACHE_GUILD_IDS_RAW.split(",")[0].strip() or "1337420081382297682")
 }
-if not MESSAGE_CACHE_GUILD_IDS:
-    MESSAGE_CACHE_GUILD_IDS = None
 
 
 def uid(value: Any) -> str:
     return str(value)
 
 def should_track_messages(guild_id: int) -> bool:
-    if MESSAGE_CACHE_GUILD_IDS is None:
-        return True
     return str(guild_id) in MESSAGE_CACHE_GUILD_IDS
 
 if discord:
@@ -229,7 +228,8 @@ if discord:
         _recent_message_context[user_id] = (list(_message_buffer[user_id]), time.time())
         if DEBUG_EVENTS:
             print(f"[DEBUG] RAM Cache for {message.author.name}: {len(_message_buffer[user_id])} messages stored.")
-        await maybe_snapshot_messages(user_id, message.guild.id)
+        if ENABLE_MESSAGE_SNAPSHOTS:
+            await maybe_snapshot_messages(user_id, message.guild.id)
 
 @bot_client.event
 async def on_member_ban(guild, user):
@@ -242,7 +242,7 @@ async def on_member_ban(guild, user):
 
     if cached_msgs and is_supabase_ready():
         try:
-            await supabase_request(
+            result = await supabase_request(
                 "post",
                 "banned_user_context",
                 params={"on_conflict": "user_id"},
@@ -251,9 +251,9 @@ async def on_member_ban(guild, user):
                     "messages": cached_msgs,
                     "banned_at": int(time.time()),
                 },
-                prefer="resolution=merge-duplicates",
+                prefer="resolution=merge-duplicates,return=minimal",
             )
-            logging.info("Saved %d messages to Supabase for %s", len(cached_msgs), user_id)
+            logging.info("Saved %d messages to Supabase for %s ok=%s", len(cached_msgs), user_id, bool(result))
         except Exception as exc:
             logging.warning("Failed to store banned context for %s: %s", user_id, exc)
 
@@ -946,8 +946,22 @@ async def supabase_request(method: str, table: str, *, params: Optional[dict] = 
         client = get_http_client()
         resp = await client.request(method, url, params=params, headers=headers, json=payload, timeout=10)
         resp.raise_for_status()
-        if resp.content:
-            return resp.json()
+        if not resp.content:
+            return True
+        return resp.json()
+    except httpx.HTTPStatusError as exc:
+        body = ""
+        try:
+            body = exc.response.text or ""
+        except Exception:
+            body = ""
+        logging.warning(
+            "Supabase request failed table=%s method=%s status=%s body=%s",
+            table,
+            method,
+            getattr(exc.response, "status_code", "unknown"),
+            (body[:800] + "…") if len(body) > 800 else body,
+        )
     except Exception as exc:
         logging.warning("Supabase request failed table=%s method=%s error=%s", table, method, exc)
     return None
@@ -982,14 +996,14 @@ async def log_appeal_to_supabase(
         "user_agent": user_agent,
         "message_cache": message_cache,
     }
-    await supabase_request("post", SUPABASE_TABLE, payload=payload)
+    await supabase_request("post", SUPABASE_TABLE, payload=payload, prefer="return=minimal")
 
 
 async def get_remote_last_submit(user_id: str) -> Optional[float]:
     recs = await supabase_request(
         "get",
         SUPABASE_SESSION_TABLE,
-        params={"user_id": f"eq.{user_id}", "order": "last_submit.desc", "limit": 1},
+        params={"user_id": f"eq.{user_id}", "order": "last_submit.desc", "limit": 1, "select": "last_submit"},
     )
     if recs:
         try:
@@ -1003,7 +1017,7 @@ async def is_session_token_used(token_hash: str) -> bool:
     recs = await supabase_request(
         "get",
         SUPABASE_SESSION_TABLE,
-        params={"token_hash": f"eq.{token_hash}", "limit": 1},
+        params={"token_hash": f"eq.{token_hash}", "limit": 1, "select": "token_hash"},
     )
     return bool(recs)
 
@@ -1014,7 +1028,7 @@ async def mark_session_token(token_hash: str, user_id: str, ts: float):
         "post",
         SUPABASE_SESSION_TABLE,
         payload=payload,
-        prefer="resolution=merge-duplicates",
+        prefer="resolution=merge-duplicates,return=minimal",
     )
 
 
@@ -1032,11 +1046,19 @@ async def update_appeal_status(
         "dm_delivered": dm_delivered,
         "notes": notes,
     }
-    await supabase_request("patch", SUPABASE_TABLE, params={"appeal_id": f"eq.{appeal_id}"}, payload=payload)
+    await supabase_request("patch", SUPABASE_TABLE, params={"appeal_id": f"eq.{appeal_id}"}, payload=payload, prefer="return=minimal")
 
 
-async def fetch_appeal_history(user_id: str, limit: int = 25) -> List[dict]:
-    params = {"user_id": f"eq.{user_id}", "order": "created_at.desc", "limit": min(limit, 100)}
+async def fetch_appeal_history(user_id: str, limit: int = 25, *, select: Optional[str] = None) -> List[dict]:
+    params = {
+        "user_id": f"eq.{user_id}",
+        "order": "created_at.desc",
+        "limit": min(limit, 100),
+    }
+    if select:
+        params["select"] = select
+    else:
+        params["select"] = "appeal_id,status,created_at,ban_reason,appeal_reason"
     records = await supabase_request("get", SUPABASE_TABLE, params=params)
     return records or []
 
@@ -1438,6 +1460,8 @@ async def send_log_message(content: str):
 
 
 async def maybe_snapshot_messages(user_id: str, guild_id: str):
+    if not ENABLE_MESSAGE_SNAPSHOTS:
+        return
     if not is_supabase_ready():
         return
     if not should_track_messages(guild_id):
@@ -1454,12 +1478,13 @@ async def persist_message_snapshot(user_id: str, messages: List[dict]):
         return
     logging.info("Persisting %d messages for user %s", len(messages[-15:]), user_id)
     try:
+        updated_at = int(time.time())
         await supabase_request(
             "post",
             "user_message_snapshots",
             params={"on_conflict": "user_id"},
-            payload={"user_id": user_id, "messages": messages[-15:]},
-            prefer="resolution=merge-duplicates",
+            payload={"user_id": user_id, "messages": messages[-15:], "updated_at": updated_at},
+            prefer="resolution=merge-duplicates,return=minimal",
         )
     except Exception as exc:
         logging.warning("Snapshot persist failed for %s: %s", user_id, exc)
@@ -1472,7 +1497,7 @@ async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
         recs = await supabase_request(
             "get",
             "banned_user_context",
-            params={"user_id": f"eq.{user_id}", "limit": 1},
+            params={"user_id": f"eq.{user_id}", "limit": 1, "select": "messages"},
         )
         if recs and recs[0].get("messages"):
             messages = recs[0]["messages"]
@@ -1785,7 +1810,7 @@ async def status_page(request: Request, lang: Optional[str] = None):
     content = f"""
       <div class="card">
         <h1 style="margin:12px 0 8px;">Appeal history for {html.escape(clean_display_name(session.get('display_name') or session.get('uname','you')))}</h1>
-        <p class="muted">You are signed in. We keep this session encrypted for {PERSIST_SESSION_SECONDS // 86400} days.</p>
+        <p class="muted">Review your recent appeals and their current status.</p>
         {history_html}
         <div class="btn-row" style="margin-top:10px;">
           <a class="btn secondary" href="/">Back home</a>
@@ -1803,10 +1828,21 @@ async def status_page(request: Request, lang: Optional[str] = None):
 async def status_data(request: Request):
     session = read_user_session(request)
     if not session:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        return {"history": []}
     if not is_supabase_ready():
         return {"history": []}
-    history = await fetch_appeal_history(session["uid"], limit=5)
+
+    uid_str = str(session.get("uid") or "")
+    now = time.time()
+    cached = _status_data_cache.get(uid_str)
+    if cached and (now - cached[1]) < STATUS_DATA_CACHE_TTL_SECONDS:
+        return cached[0]
+
+    history = await fetch_appeal_history(
+        session["uid"],
+        limit=5,
+        select="appeal_id,status,created_at,ban_reason",
+    )
     slim = [
         {
             "appeal_id": item.get("appeal_id"),
@@ -1816,7 +1852,9 @@ async def status_data(request: Request):
         }
         for item in history
     ]
-    return {"history": slim}
+    payload = {"history": slim}
+    _status_data_cache[uid_str] = (payload, now)
+    return payload
 
 
 @app.get("/logout")

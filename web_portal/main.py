@@ -48,7 +48,7 @@ SUPABASE_TABLE = "discord-appeals"
 SUPABASE_SESSION_TABLE = "discord-appeal-sessions"
 SUPABASE_CONTEXT_TABLE = "banned_user_context"
 INVITE_LINK = "https://discord.gg/blockspin"
-MESSAGE_CACHE_GUILD_IDS_RAW = os.getenv("MESSAGE_CACHE_GUILD_ID", "1337420081382297682")
+MESSAGE_CACHE_GUILD_IDS_RAW = os.getenv("MESSAGE_CACHE_GUILD_ID", "").strip()
 READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
 DEBUG_EVENTS = os.getenv("DEBUG_EVENTS", "false").lower() == "true"
@@ -165,13 +165,14 @@ _message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
 _recent_message_context: Dict[str, Tuple[List[dict], float]] = {}
 RECENT_MESSAGE_CACHE_TTL = int(os.getenv("RECENT_MESSAGE_CACHE_TTL", "120"))
 
-MESSAGE_CACHE_GUILD_IDS = {
+_raw_cache_guilds = [
     gid.strip()
     for gid in MESSAGE_CACHE_GUILD_IDS_RAW.split(",")
     if gid.strip()
-}
-if not MESSAGE_CACHE_GUILD_IDS:
-    MESSAGE_CACHE_GUILD_IDS = None
+]
+if TARGET_GUILD_ID and TARGET_GUILD_ID != "0":
+    _raw_cache_guilds.append(TARGET_GUILD_ID)
+MESSAGE_CACHE_GUILD_IDS = set(_raw_cache_guilds) if _raw_cache_guilds else None
 
 
 def uid(value: Any) -> str:
@@ -682,60 +683,318 @@ input:focus, textarea:focus{
   text-align:center;
 }
 
+:root{
+  --bg:#030510;
+  --bg-alt:#0f172a;
+  --surface:#101828;
+  --surface-soft:#141b2e;
+  --card-border:rgba(255,255,255,.08);
+  --text:#f8fafc;
+  --muted:#94a3b8;
+  --border:#1f2a44;
+  --accent:#6366f1;
+  --accent-soft:rgba(99,102,241,.15);
+  --radius:18px;
+}
+body{
+  background:radial-gradient(circle at 15% 15%, rgba(99,102,241,.25), transparent 40%), radial-gradient(circle at 85% 0%, rgba(239,68,68,.2), transparent 45%), var(--bg);
+}
+.app{
+  max-width:1100px;
+  margin:0 auto;
+  padding:32px 24px 48px;
+  display:flex;
+  flex-direction:column;
+  gap:22px;
+}
+.brand-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  flex-wrap:wrap;
+  gap:16px;
+}
+.brand{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.logo{
+  width:44px;
+  height:44px;
+  border-radius:16px;
+  display:grid;
+  place-items:center;
+  font-weight:700;
+  letter-spacing:.08em;
+  background:linear-gradient(135deg,var(--accent),#8b5cf6);
+  color:#fff;
+}
+.brand-text h1{
+  margin:0;
+  font-size:20px;
+}
+.brand-text span{
+  font-size:13px;
+  color:var(--muted);
+}
+.card{
+  background:var(--surface);
+  border:1px solid var(--card-border);
+  border-radius:var(--radius);
+  box-shadow:0 20px 45px rgba(6,8,15,.4);
+  padding:26px;
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+}
+.hero-card{
+  background:linear-gradient(135deg,#11192d,#0f152b 60%);
+}
+.hero-card h1{
+  margin:0;
+  font-size:30px;
+}
+.hero-sub{
+  color:var(--muted);
+  font-size:17px;
+  margin:0;
+  max-width:640px;
+}
+.hero-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px;
+}
+.badge{
+  padding:5px 14px;
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.08em;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.2);
+  background:rgba(99,102,241,.15);
+  color:#e0e7ff;
+  width:fit-content;
+}
+.live-status{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-size:14px;
+  color:var(--muted);
+}
+.live-status .dot{
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  background:#22c55e;
+  box-shadow:0 0 12px rgba(34,197,94,.6);
+}
+.btn{
+  padding:12px 22px;
+  border-radius:14px;
+  border:none;
+  font-size:14px;
+  font-weight:600;
+  cursor:pointer;
+  background:var(--accent);
+  color:#fff;
+  text-decoration:none;
+  box-shadow:0 12px 30px rgba(99,102,241,.4);
+  transition:transform .2s ease, box-shadow .2s ease;
+}
+.btn:hover{
+  transform:translateY(-1px);
+  box-shadow:0 20px 40px rgba(99,102,241,.45);
+}
+.btn.secondary{
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.2);
+  color:var(--text);
+  box-shadow:none;
+}
+.info-grid{
+  display:grid;
+  gap:20px;
+  grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+}
+.info-card{
+  background:var(--surface-soft);
+  border:1px solid rgba(255,255,255,.06);
+}
+.info-card ol{
+  margin:0;
+  padding-left:18px;
+  color:var(--muted);
+}
+.info-card li{
+  margin-bottom:10px;
+}
+.home-grid{
+  display:grid;
+  gap:20px;
+  grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  align-items:start;
+}
+.home-panel{
+  display:flex;
+  flex-direction:column;
+  gap:20px;
+}
+.history-card{
+  background:var(--surface-soft);
+  border:1px solid rgba(255,255,255,.08);
+  min-height:220px;
+}
+.history-card h2{
+  margin:0;
+  font-size:20px;
+}
+.history-placeholder{
+  color:var(--muted);
+}
+.history-list{
+  list-style:none;
+  padding:0;
+  margin:0;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.history-item{
+  border-radius:12px;
+  padding:12px 14px;
+  border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.02);
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.history-item .meta{
+  font-size:13px;
+  color:var(--muted);
+}
+.status-chip{
+  padding:4px 10px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  width:fit-content;
+}
+.status-chip.accepted{
+  background:rgba(34,197,94,.15);
+  color:#86efac;
+}
+.status-chip.declined{
+  background:rgba(239,68,68,.15);
+  color:#fecdd3;
+}
+.status-chip.pending{
+  background:rgba(99,102,241,.15);
+  color:#c7d2fe;
+}
+.chat-box{
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:14px;
+  background:#0a0d16;
+  padding:12px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  max-height:280px;
+  overflow:auto;
+}
+.chat-row{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
+.chat-time{
+  font-size:11px;
+  color:var(--muted);
+  display:flex;
+  align-items:center;
+  gap:6px;
+}
+.chat-channel{
+  font-size:11px;
+  padding:2px 6px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.1);
+  color:#cbd5f5;
+}
+.chat-content{
+  font-family:ui-monospace,"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+  font-size:14px;
+  color:#e2e8f0;
+}
+.callout{
+  border-radius:12px;
+  border:1px dashed rgba(255,255,255,.2);
+  padding:12px;
+  color:var(--muted);
+  font-size:13px;
+}
+.status-card{
+  background:var(--surface-soft);
+  border:1px solid rgba(255,255,255,.08);
+}
+.status-heading h1{
+  margin:0;
+}
+.status-heading .muted{
+  margin-top:4px;
+}
+.footer{
+  font-size:13px;
+  color:var(--muted);
+  text-align:center;
+  margin-top:30px;
+}
+@media (max-width:720px){
+  .app{
+    padding:24px 16px 40px;
+  }
+  .brand-row{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+}
+
 """
-
-
-
 
 LANG_STRINGS = {
     "en": {
-        "hero_title": "Appeal your Discord ban.",
-        "hero_sub": "Login to Discord to see details, review recent context, and submit an appeal.",
-        "login": "Login with Discord",
+        "hero_title": "Resolve your BlockSpin ban.",
+        "hero_sub": "Sign in with Discord to confirm your identity, review ban context, and submit a respectful appeal.",
+        "login": "Continue with Discord",
         "how_it_works": "How it works",
-        "step_1": "Authenticate with Discord to confirm it's your account.",
-        "step_2": "Review ban details, share evidence, and submit securely.",
-        "step_3": "Stay signed in to monitor your appeal status.",
-        "appeal_cta": "Appeal your ban",
-        "appeal_blurb": "Submit one appeal within the allowed window. We'll keep you signed in to track the decision.",
-        "status_cta": "View status",
-        "stay_signed_in": "Stay signed in",
-        "stay_signed_in_blurb": "We keep your session secured so you can check decisions anytime.",
+        "status_cta": "Track my appeal",
         "history_title": "Appeal history",
-        "history_blurb": "",
-        "welcome_back": "Welcome back",
         "review_ban": "Review my ban",
-        "start_now": "Start now",
         "error_retry": "Retry",
-        "error_home": "Go Home",
+        "error_home": "Go home",
         "ban_details": "Ban details",
-        "messages_header": "Recent messages",
-        "no_messages": "No cached messages available.",
+        "messages_header": "Recent context",
+        "no_messages": "No recent messages available.",
         "language_switch": "Switch language",
     },
     "es": {
-        "hero_title": "Apela tu expulsión de Discord con confianza.",
-        "hero_sub": "Verifica tu identidad, revisa por qué fuiste expulsado, mira el contexto reciente y envía una única apelación.",
-        "login": "Iniciar sesión con Discord",
-        "how_it_works": "Cómo funciona",
-        "step_1": "Autentícate con Discord para confirmar que es tu cuenta.",
-        "step_2": "Revisa los detalles del baneo, comparte evidencia y envía tu apelación de forma segura.",
-        "step_3": "Mantente conectado para seguir el estado de tu apelación.",
-        "appeal_cta": "Apelar tu expulsión",
-        "appeal_blurb": "Envía una apelación dentro del periodo permitido. Mantendremos tu sesión para seguir la decisión.",
-        "status_cta": "Ver estado",
-        "stay_signed_in": "Mantente conectado",
-        "stay_signed_in_blurb": "Guardamos tu sesión de forma segura para que revises decisiones en cualquier momento.",
+        "hero_title": "Resuelve tu baneo en BlockSpin.",
+        "hero_sub": "Conecta con Discord, revisa el contexto y envía una apelación clara.",
+        "login": "Continuar con Discord",
+        "how_it_works": "Como funciona",
+        "status_cta": "Ver mi apelacion",
         "history_title": "Historial de apelaciones",
-        "history_blurb": "",
-        "welcome_back": "Bienvenido de nuevo",
-        "review_ban": "Revisar mi expulsión",
-        "start_now": "Comenzar",
+        "review_ban": "Revisar mi baneo",
         "error_retry": "Reintentar",
         "error_home": "Ir al inicio",
         "ban_details": "Detalles del baneo",
-        "messages_header": "Mensajes recientes (cacheados)",
-        "no_messages": "No hay mensajes cacheados.",
+        "messages_header": "Contexto reciente",
+        "no_messages": "No hay mensajes recientes.",
         "language_switch": "Cambiar idioma",
     },
 }
@@ -1576,46 +1835,63 @@ async def home(request: Request, lang: Optional[str] = None):
     elif user_session:
         history_html = "<div class='muted'></div>"
 
-    login_button = ""
-    if not user_session:
-        login_button = f'<a class="btn" href="{oauth_authorize_url(state)}">{strings["login"]}</a>'
-    review_button = (
-        f'<a class="btn" href="/status">{strings.get("review_ban","Review my ban")}</a>'
+    login_url = oauth_authorize_url(state)
+    primary_action = (
+        f'<a class="btn" href="/status">{strings["review_ban"]}</a>'
         if user_session
-        else f'<a class="btn" href="{oauth_authorize_url(state)}">{strings.get("review_ban","Review my ban")}</a>'
+        else f'<a class="btn" href="{login_url}">{strings["login"]}</a>'
     )
-    status_button = "" if user_session else f'<a class="btn secondary" href="/status">{strings["status_cta"]}</a>'
+    secondary_action = f'<a class="btn secondary" href="/status">{strings["status_cta"]}</a>'
+
+    if user_session:
+        history_panel = f"""
+        <div class="card history-card">
+          <h2>{strings['history_title']}</h2>
+          <div id="live-history">{history_html}</div>
+        </div>
+        """
+    else:
+        history_panel = f"""
+        <div class="card history-card">
+          <h2>{strings['history_title']}</h2>
+          <p class="history-placeholder">Sign in to review your appeal activity.</p>
+          <div class="btn-row" style="margin-top:6px;">
+            <a class="btn secondary" href="/status">{strings['status_cta']}</a>
+          </div>
+        </div>
+        """
 
     content = f"""
-      <div class="card hero">
-        <div class="badge">Official Portal</div>
-        <h1>{strings['hero_title']}</h1>
-        <p>{strings['hero_sub']}</p>
-        
-        <div class="btn-row">
-           {review_button}
-           {status_button}
-        </div>
-
-        <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 12px;">
-            <div id="live-status" style="display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted);">
-                <span style="display: block; width: 8px; height: 8px; background: #3ba55c; border-radius: 50%; box-shadow: 0 0 8px #3ba55c;"></span>
-                <span class="value">System Online</span>
+      <div class="home-grid">
+        <div class="home-panel">
+          <div class="card hero-card">
+            <div class="hero-meta">
+              <div>
+                <div class="badge">Official portal</div>
+                <p class="hero-sub" style="margin:8px 0 0;">{strings['hero_sub']}</p>
+              </div>
+              <div id="live-status" class="live-status">
+                <span class="dot"></span>
+                <span class="value">System online</span>
+              </div>
             </div>
-            <div style="margin-left: auto; font-size: 13px;">
-                <a href="/tos" style="color: var(--muted); text-decoration: none; margin-right: 12px;">Terms</a>
-                <a href="/privacy" style="color: var(--muted); text-decoration: none;">Privacy</a>
+            <h1>{strings['hero_title']}</h1>
+            <div class="hero-actions">
+              {primary_action}
+              {secondary_action}
             </div>
+          </div>
+          <div class="card info-card">
+            <h2>{strings.get('how_it_works', 'How it works')}</h2>
+            <ol>
+              <li>Authenticate with Discord so we can verify the account.</li>
+              <li>Review the ban details and any message context before composing your appeal.</li>
+              <li>Describe what happened, share supporting evidence, and wait for moderator feedback.</li>
+            </ol>
+          </div>
         </div>
+        {history_panel}
       </div>
-      {"" 
-      if not user_session
-      else f"""
-      <div class="card">
-        <h2>{strings['history_title']}</h2>
-        <div id="live-history">{history_html}</div>
-      </div>
-      """}
     """
     script_nonce = secrets.token_urlsafe(12)
     strings["script_nonce"] = script_nonce
@@ -1783,14 +2059,15 @@ async def status_page(request: Request, lang: Optional[str] = None):
         history_html = "<div class='muted'></div>"
 
     content = f"""
-      <div class="card">
-        <h1 style="margin:12px 0 8px;">Appeal history for {html.escape(clean_display_name(session.get('display_name') or session.get('uname','you')))}</h1>
-        <p class="muted">You are signed in. We keep this session encrypted for {PERSIST_SESSION_SECONDS // 86400} days.</p>
+      <div class="card status-card">
+        <div class="status-heading">
+          <h1>Appeal history for {html.escape(clean_display_name(session.get('display_name') or session.get('uname','you')))}</h1>
+          <p class="muted">Monitor decisions and peer context for this ban review.</p>
+        </div>
         {history_html}
         <div class="btn-row" style="margin-top:10px;">
           <a class="btn secondary" href="/">Back home</a>
         </div>
-        <div class="footer">Need to update details? Start a new session from the home page.</div>
       </div>
     """
     resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
@@ -1977,7 +2254,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
             </div>
             <button class="btn" type="submit">Submit appeal</button>
           </form>
-          <div class="callout" style="margin-top:10px;">We keep you signed in so you can check your appeal status without re-authenticating.</div>
+           <div class="callout" style="margin-top:10px;">Share concise context and relevant evidence so moderators can review your appeal efficiently.</div>
         </div>
         <div class="card">
           <h2>{strings['ban_details']}</h2>

@@ -163,7 +163,7 @@ SESSION_COOKIE_NAME = "bs_session"
 bot_client = None
 _message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
 _recent_message_context: Dict[str, Tuple[List[dict], float]] = {}
-RECENT_MESSAGE_CACHE_TTL = int(os.getenv("RECENT_MESSAGE_CACHE_TTL", "120"))
+RECENT_MESSAGE_CACHE_TTL = int(os.getenv("RECENT_MESSAGE_CACHE_TTL", "3600"))
 
 _raw_cache_guilds = [
     gid.strip()
@@ -232,20 +232,21 @@ if discord:
             print(f"[DEBUG] RAM Cache for {message.author.name}: {len(_message_buffer[user_id])} messages stored.")
         await maybe_snapshot_messages(user_id, message.guild.id)
 
-@bot_client.event
-async def on_member_ban(guild, user):
-    user_id = uid(user.id)
-    if not should_track_messages(guild.id):
-        return
+    @bot_client.event
+    async def on_member_ban(guild, user):
+        user_id = uid(user.id)
+        if not should_track_messages(guild.id):
+            return
 
-    logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
-    cached_msgs = list(_message_buffer.get(user_id, []))
+        logging.info("Detected ban for user %s in guild %s", user_id, guild.id)
+        cached_msgs = list(_message_buffer.get(user_id, []))
+        if not cached_msgs:
+            cached_msgs = _get_recent_message_context(user_id, 15)
 
-    if cached_msgs and is_supabase_ready():
-        try:
+        if is_supabase_ready():
             await supabase_request(
                 "post",
-                "banned_user_context",
+                SUPABASE_CONTEXT_TABLE,
                 params={"on_conflict": "user_id"},
                 payload={
                     "user_id": user_id,
@@ -254,12 +255,10 @@ async def on_member_ban(guild, user):
                 },
                 prefer="resolution=merge-duplicates",
             )
-            logging.info("Saved %d messages to Supabase for %s", len(cached_msgs), user_id)
-        except Exception as exc:
-            logging.warning("Failed to store banned context for %s: %s", user_id, exc)
+            logging.info("Stored banned context user=%s msgs=%s", user_id, len(cached_msgs))
 
-    _message_buffer.pop(user_id, None)
-    _recent_message_context.pop(user_id, None)
+        _message_buffer.pop(user_id, None)
+        _recent_message_context.pop(user_id, None)
 
 BASE_STYLES = """
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -1207,6 +1206,19 @@ async def supabase_request(method: str, table: str, *, params: Optional[dict] = 
         resp.raise_for_status()
         if resp.content:
             return resp.json()
+    except httpx.HTTPStatusError as exc:
+        body = ""
+        try:
+            body = exc.response.text or ""
+        except Exception:
+            body = ""
+        logging.warning(
+            "Supabase request failed table=%s method=%s status=%s body=%s",
+            table,
+            method,
+            getattr(exc.response, "status_code", "unknown"),
+            (body[:800] + "…") if len(body) > 800 else body,
+        )
     except Exception as exc:
         logging.warning("Supabase request failed table=%s method=%s error=%s", table, method, exc)
     return None
@@ -1730,7 +1742,7 @@ async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
     try:
         recs = await supabase_request(
             "get",
-            "banned_user_context",
+            SUPABASE_CONTEXT_TABLE,
             params={"user_id": f"eq.{user_id}", "limit": 1},
         )
         if recs and recs[0].get("messages"):
@@ -1746,6 +1758,25 @@ async def fetch_message_cache(user_id: str, limit: int = 15) -> List[dict]:
             return sorted(messages, key=get_ts, reverse=True)[:limit]
     except Exception as exc:
         logging.warning("Failed to fetch context for %s: %s", user_id, exc)
+    try:
+        recs = await supabase_request(
+            "get",
+            "user_message_snapshots",
+            params={"user_id": f"eq.{user_id}", "limit": 1},
+        )
+        if recs and recs[0].get("messages"):
+            messages = recs[0]["messages"]
+
+            def get_ts(m: dict) -> float:
+                t = m.get("timestamp", 0)
+                try:
+                    return float(t)
+                except Exception:
+                    return 0.0
+
+            return sorted(messages, key=get_ts, reverse=True)[:limit]
+    except Exception:
+        pass
     return _get_recent_message_context(user_id, limit)
 
 
@@ -2202,6 +2233,32 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     await ensure_dm_guild_membership(user["id"])
 
     message_cache = await fetch_message_cache(user["id"])
+
+    # Fallback: if the ban event wasn't observed (e.g. bot restart), persist the best-available cache when the banned
+    # user authenticates so moderators can still see context in Supabase.
+    if is_supabase_ready() and message_cache:
+        existing_context = await supabase_request(
+            "get",
+            SUPABASE_CONTEXT_TABLE,
+            params={"user_id": f"eq.{user['id']}", "limit": 1},
+        )
+        existing_banned_at = None
+        if existing_context:
+            try:
+                existing_banned_at = int(existing_context[0].get("banned_at") or 0) or None
+            except Exception:
+                existing_banned_at = None
+        await supabase_request(
+            "post",
+            SUPABASE_CONTEXT_TABLE,
+            params={"on_conflict": "user_id"},
+            payload={
+                "user_id": user["id"],
+                "messages": message_cache,
+                "banned_at": existing_banned_at or int(time.time()),
+            },
+            prefer="resolution=merge-duplicates",
+        )
 
     session = serializer.dumps(
         {

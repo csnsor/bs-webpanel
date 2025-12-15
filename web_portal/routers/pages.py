@@ -72,71 +72,223 @@ async def home(request: Request, lang: Optional[str] = None):
     user_session = read_user_session(request)
     user_session, session_refreshed = await refresh_session_profile(user_session)
     strings = dict(strings)
-    strings["user_chip"] = build_user_chip(user_session)
-    history_html = ""
-    if user_session and is_supabase_ready():
-        history = await fetch_appeal_history(user_session["uid"], limit=5)
-        history_html = render_history_items(history, format_timestamp=format_timestamp)
-    elif user_session:
-        history_html = "<div class='muted'></div>"
-
     login_url = oauth_authorize_url(state)
-    primary_action = (
-        f'<a class="btn" href="/status">{strings["review_ban"]}</a>'
-        if user_session
-        else f'<a class="btn" href="{login_url}">{strings["login"]}</a>'
-    )
-    secondary_action = f'<a class="btn secondary" href="/status">{strings["status_cta"]}</a>'
 
-    if user_session:
-        history_panel = f"""
-        <div class="card history-card">
-          <h2>{strings['history_title']}</h2>
-          <div id="live-history">{history_html}</div>
-        </div>
-        """
-    else:
-        history_panel = f"""
-        <div class="card history-card">
-          <h2>{strings['history_title']}</h2>
-          <p class="history-placeholder">Sign in to review your appeal activity.</p>
-          <div class="btn-row" style="margin-top:6px;">
-            <a class="btn secondary" href="/status">{strings['status_cta']}</a>
-          </div>
-        </div>
-        """
+    strings["top_actions"] = build_user_chip(user_session, login_url=login_url)
 
     content = f"""
-      <div class="home-grid">
-        <div class="home-panel">
-          <div class="card hero-card">
-            <div class="hero-meta">
-              <div>
-                <h1 style="margin:0;">{strings['hero_title']}</h1>
-                <p class="hero-sub" style="margin:10px 0 0;">{strings['hero_sub']}</p>
-              </div>
-            </div>
-            <div class="hero-actions">
-              {primary_action}
-              {secondary_action}
-            </div>
+    <section class="hero">
+      <div class="hero__card">
+        <div class="hero__badge">
+          <span class="pulse" aria-hidden="true"></span>
+          Live moderation workflow
+        </div>
+
+        <h1 class="hero__title">
+          Resolve your ban the <span class="shine">right way</span>.
+        </h1>
+
+        <p class="hero__sub">
+          Authenticate with Discord, review your status, and submit a clear, respectful appeal to BlockSpin moderators.
+        </p>
+
+        <div class="hero__cta">
+          <a class="btn btn--primary" href="{html.escape(login_url)}" aria-label="Appeal ban (starts sign-in if needed)">
+            Appeal Ban
+          </a>
+          <a class="btn btn--soft" href="/status">
+            View Status
+          </a>
+        </div>
+
+        <div class="hero__meta">
+          <div class="stat">
+            <div class="stat__k">Live status</div>
+            <div class="stat__v" id="liveStatus">Checking…</div>
           </div>
-          <div class="card info-card">
-            <h2>{strings.get('how_it_works', 'How it works')}</h2>
-            <ol>
-              <li>Authenticate with Discord so we can verify the account.</li>
-              <li>Review the ban details and any message context before composing your appeal.</li>
-              <li>Describe what happened, share supporting evidence, and wait for moderator feedback.</li>
-            </ol>
+          <div class="stat">
+            <div class="stat__k">Latest ref</div>
+            <div class="stat__v" id="liveRef">—</div>
+          </div>
+          <div class="stat">
+            <div class="stat__k">Decision</div>
+            <div class="stat__v" id="liveDecision">—</div>
           </div>
         </div>
-        {history_panel}
       </div>
+
+      <div class="hero__side">
+        <div class="panel">
+          <h2 class="panel__title">How it works</h2>
+          <ol class="steps">
+            <li><span class="steps__n">1</span> Sign in with Discord to confirm identity.</li>
+            <li><span class="steps__n">2</span> Review your appeal status + history.</li>
+            <li><span class="steps__n">3</span> Submit one appeal with concise evidence.</li>
+          </ol>
+          <div class="panel__note">
+            Tip: “I understand what I did, here’s context, here’s how I’ll improve” is the fastest path.
+          </div>
+
+          <div class="panel__actions">
+            <a class="btn btn--discord btn--wide" href="{html.escape(login_url)}">Continue with Discord</a>
+            <div class="legal">
+              <a href="/tos">Terms</a>
+              <span class="dot" aria-hidden="true"></span>
+              <a href="/privacy">Privacy</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <div class="card__top">
+          <h2 class="card__title">Appeal history</h2>
+          <div class="chip" id="historyChip">Loading…</div>
+        </div>
+
+        <div class="empty" id="historyEmpty">
+          Sign in to see your history and live status.
+          <div class="empty__actions">
+            <a class="btn btn--soft" href="/status">Open Status</a>
+          </div>
+        </div>
+
+        <ul class="list" id="historyList" hidden></ul>
+      </article>
+
+      <article class="card">
+        <div class="card__top">
+          <h2 class="card__title">Status signals</h2>
+          <div class="chip chip--ok" id="signalChip">Portal online</div>
+        </div>
+
+        <div class="kv">
+          <div class="kv__row">
+            <div class="kv__k">Live feed</div>
+            <div class="kv__v" id="feedState">Connected</div>
+          </div>
+          <div class="kv__row">
+            <div class="kv__k">Updates</div>
+            <div class="kv__v">Every 15s</div>
+          </div>
+          <div class="kv__row">
+            <div class="kv__k">Privacy</div>
+            <div class="kv__v">Minimal display</div>
+          </div>
+        </div>
+
+        <div class="callout">
+          Appeals are reviewed by moderators. Decisions may be final. Don’t spam submissions.
+        </div>
+      </article>
+    </section>
     """
+
     strings["script_nonce"] = secrets.token_urlsafe(12)
-    # Live banner + history live refresh is handled globally in `render_page()`.
-    strings["script_block"] = ""
-    response = HTMLResponse(render_page("BlockSpin Appeals", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
+    strings["script_block"] = """
+    (function(){
+      const els = {
+        liveStatus: document.getElementById("liveStatus"),
+        liveRef: document.getElementById("liveRef"),
+        liveDecision: document.getElementById("liveDecision"),
+        list: document.getElementById("historyList"),
+        empty: document.getElementById("historyEmpty"),
+        chip: document.getElementById("historyChip"),
+        feedState: document.getElementById("feedState"),
+        signalChip: document.getElementById("signalChip"),
+      };
+
+      function esc(s){ return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+      function statusClass(status){
+        const t = String(status || "pending").toLowerCase();
+        if (t.startsWith("accept")) return "ok";
+        if (t.startsWith("decline")) return "no";
+        return "wait";
+      }
+      function statusLabel(status){
+        const t = String(status || "pending").toLowerCase();
+        if (t.startsWith("accept")) return "Accepted";
+        if (t.startsWith("decline")) return "Declined";
+        return "Pending";
+      }
+
+      async function tick(){
+        try{
+          const r = await fetch("/status/data", { headers: { "Accept":"application/json" } });
+          const data = await r.json();
+          const hist = Array.isArray(data.history) ? data.history : [];
+
+          if (!hist.length){
+            if (els.liveStatus) els.liveStatus.textContent = "Sign in required";
+            if (els.liveRef) els.liveRef.textContent = "—";
+            if (els.liveDecision) els.liveDecision.textContent = "—";
+            if (els.chip) els.chip.textContent = "No data";
+            if (els.empty) els.empty.hidden = false;
+            if (els.list) els.list.hidden = true;
+            if (els.feedState) els.feedState.textContent = "Idle";
+            return;
+          }
+
+          const latest = hist[0] || {};
+          if (els.liveStatus) els.liveStatus.textContent = "Active";
+          if (els.liveRef) els.liveRef.textContent = latest.appeal_id ? String(latest.appeal_id) : "—";
+          if (els.liveDecision) els.liveDecision.textContent = statusLabel(latest.status);
+          if (els.chip) els.chip.textContent = `${hist.length} recent`;
+
+          if (els.empty) els.empty.hidden = true;
+          if (els.list) els.list.hidden = false;
+
+          if (els.list){
+            els.list.innerHTML = hist.map(item => {
+              const s = statusLabel(item.status);
+              const cls = statusClass(item.status);
+              return `
+                <li class="row">
+                  <div class="row__left">
+                    <div class="pill pill--${cls}">${esc(s)}</div>
+                    <div class="row__meta">
+                      <div class="row__k">Reference</div>
+                      <div class="row__v">${esc(item.appeal_id || "—")}</div>
+                    </div>
+                    <div class="row__meta">
+                      <div class="row__k">Submitted</div>
+                      <div class="row__v">${esc(item.created_at || "—")}</div>
+                    </div>
+                  </div>
+                  <div class="row__right">
+                    <div class="row__k">Ban reason</div>
+                    <div class="row__v row__v--wrap">${esc(item.ban_reason || "—")}</div>
+                  </div>
+                </li>
+              `;
+            }).join("");
+          }
+
+          if (els.feedState) els.feedState.textContent = "Connected";
+          if (els.signalChip){
+            els.signalChip.textContent = "Portal online";
+            els.signalChip.classList.remove("chip--warn");
+            els.signalChip.classList.add("chip--ok");
+          }
+        }catch(e){
+          if (els.feedState) els.feedState.textContent = "Disconnected";
+          if (els.signalChip){
+            els.signalChip.textContent = "Live updates unavailable";
+            els.signalChip.classList.add("chip--warn");
+            els.signalChip.classList.remove("chip--ok");
+          }
+          if (els.liveStatus) els.liveStatus.textContent = "Unavailable";
+        }
+      }
+
+      tick();
+      setInterval(tick, 15000);
+    })();
+    """
+
+    response = HTMLResponse(render_page("BlockSpin — Appeals", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
     maybe_persist_session(response, user_session, session_refreshed)
     response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
     return response
@@ -182,21 +334,22 @@ async def status_page(request: Request, lang: Optional[str] = None):
     session = read_user_session(request)
     session, session_refreshed = await refresh_session_profile(session)
     strings = dict(strings)
-    strings["user_chip"] = build_user_chip(session)
     if not session:
         state_token = issue_state_token(ip)
         state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
         login_url = oauth_authorize_url(state)
+        strings["top_actions"] = build_user_chip(None, login_url=login_url)
         content = f"""
           <div class="card status danger">
             <h1 style="margin-bottom:10px;">Sign in required</h1>
             <p class="muted">Sign in to view your BlockSpin appeal history and live status.</p>
-            <a class="btn" href="{login_url}">{strings['login']}</a>
+            <a class="btn btn--discord" href="{login_url}"><span class="btn__icon" aria-hidden="true">⌁</span>{strings['login']}</a>
           </div>
         """
         resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), status_code=401, headers={"Cache-Control": "no-store"})
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
+    strings["top_actions"] = build_user_chip(session)
 
     if is_supabase_ready():
         history = await fetch_appeal_history(session["uid"], limit=10)
@@ -544,4 +697,3 @@ async def submit(
       </div>
     """
     return HTMLResponse(render_page("Appeal submitted", success, lang=user_lang, strings=strings), status_code=200, headers={"Cache-Control": "no-store"})
-

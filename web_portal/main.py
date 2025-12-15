@@ -239,7 +239,7 @@ if discord:
                 status=discord.Status.online,
                 activity=discord.Activity(
                     type=discord.ActivityType.watching,
-                    name="appeals",
+                    name="Appeals on the BlockSpin Portal",
                 ),
             )
         except Exception as exc:
@@ -2200,11 +2200,10 @@ async def home(request: Request, lang: Optional[str] = None):
           <div class="card hero-card">
             <div class="hero-meta">
               <div>
-                <div class="badge">Official portal</div>
-                <p class="hero-sub" style="margin:8px 0 0;">{strings['hero_sub']}</p>
+                <h1 style="margin:0;">{strings['hero_title']}</h1>
+                <p class="hero-sub" style="margin:10px 0 0;">{strings['hero_sub']}</p>
               </div>
             </div>
-            <h1>{strings['hero_title']}</h1>
             <div class="hero-actions">
               {primary_action}
               {secondary_action}

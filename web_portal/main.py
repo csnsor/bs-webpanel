@@ -48,7 +48,9 @@ SUPABASE_TABLE = "discord-appeals"
 SUPABASE_SESSION_TABLE = "discord-appeal-sessions"
 SUPABASE_CONTEXT_TABLE = "banned_user_context"
 INVITE_LINK = "https://discord.gg/blockspin"
-MESSAGE_CACHE_GUILD_IDS_RAW = os.getenv("MESSAGE_CACHE_GUILD_ID", "").strip()
+MESSAGE_CACHE_GUILD_ID_DEFAULT = "1337420081382297682"
+MESSAGE_CACHE_GUILD_ID_RAW = (os.getenv("MESSAGE_CACHE_GUILD_ID") or MESSAGE_CACHE_GUILD_ID_DEFAULT).split(",")[0].strip()
+MESSAGE_CACHE_GUILD_ID = int(MESSAGE_CACHE_GUILD_ID_RAW or MESSAGE_CACHE_GUILD_ID_DEFAULT)
 READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
 DEBUG_EVENTS = os.getenv("DEBUG_EVENTS", "false").lower() == "true"
@@ -81,11 +83,44 @@ _temp_http_client: Optional[httpx.AsyncClient] = None
 JINJA_ENV = Environment(autoescape=select_autoescape(default_for_string=True, default=True))
 
 async def app_lifespan(app: FastAPI):
-    global http_client
+    global http_client, _bot_task
     http_client = httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=5.0))
+    if not bot_client:
+        logging.warning("discord.py not available; bot client not started.")
+        raise RuntimeError("discord.py is required for the appeal bot. Please install dependencies.")
+    if not DISCORD_BOT_TOKEN:
+        logging.warning("DISCORD_BOT_TOKEN missing; bot client not started.")
+        raise RuntimeError("DISCORD_BOT_TOKEN missing; bot client cannot start.")
+    if not _bot_task or _bot_task.done():
+        async def _run_bot():
+            try:
+                logging.info("Starting Discord bot gateway connection...")
+                logging.info(
+                    "Bot logging enabled=%s message_content_logging=%s cache_guild_allowlist=%s",
+                    BOT_EVENT_LOGGING,
+                    BOT_MESSAGE_LOG_CONTENT,
+                    MESSAGE_CACHE_GUILD_ID,
+                )
+                if BOT_EVENT_LOGGING:
+                    logging.info(
+                        "If message caching logs are missing, confirm the bot is online and has channel access + intents."
+                    )
+                await bot_client.start(DISCORD_BOT_TOKEN)
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logging.exception("Discord bot task crashed: %s", exc)
+        _bot_task = asyncio.create_task(_run_bot())
     try:
         yield
     finally:
+        if bot_client:
+            try:
+                await bot_client.close()
+            except Exception:
+                pass
+        if _bot_task and not _bot_task.done():
+            _bot_task.cancel()
         if http_client:
             await http_client.aclose()
             http_client = None
@@ -113,49 +148,6 @@ app.add_middleware(
 )
 logging.basicConfig(level=logging.INFO)
 serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
-
-@app.on_event("startup")
-async def startup_event():
-    if not bot_client:
-        logging.warning("discord.py not available; bot client not started.")
-        raise RuntimeError("discord.py is required for the appeal bot. Please install dependencies.")
-    if not DISCORD_BOT_TOKEN:
-        logging.warning("DISCORD_BOT_TOKEN missing; bot client not started.")
-        raise RuntimeError("DISCORD_BOT_TOKEN missing; bot client cannot start.")
-    global _bot_task
-    if _bot_task and not _bot_task.done():
-        return
-
-    async def _run_bot():
-        try:
-            logging.info("Starting Discord bot gateway connection...")
-            logging.info(
-                "Bot logging enabled=%s message_content_logging=%s cache_guild_allowlist=%s",
-                BOT_EVENT_LOGGING,
-                BOT_MESSAGE_LOG_CONTENT,
-                ("all" if MESSAGE_CACHE_GUILD_IDS is None else len(MESSAGE_CACHE_GUILD_IDS)),
-            )
-            if BOT_EVENT_LOGGING:
-                logging.info("If message caching logs are missing, confirm the bot is online and has channel access + intents.")
-            await bot_client.start(DISCORD_BOT_TOKEN)
-        except asyncio.CancelledError:
-            pass
-        except Exception as exc:
-            logging.exception("Discord bot task crashed: %s", exc)
-
-    _bot_task = asyncio.create_task(_run_bot())
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    global _bot_task
-    if bot_client:
-        try:
-            await bot_client.close()
-        except Exception:
-            pass
-    if _bot_task and not _bot_task.done():
-        _bot_task.cancel()
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
@@ -198,15 +190,8 @@ _message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
 _recent_message_context: Dict[str, Tuple[List[dict], float]] = {}
 RECENT_MESSAGE_CACHE_TTL = int(os.getenv("RECENT_MESSAGE_CACHE_TTL", "3600"))
 
-_raw_cache_guilds = [
-    gid.strip()
-    for gid in MESSAGE_CACHE_GUILD_IDS_RAW.split(",")
-    if gid.strip()
-]
-# If no allowlist is provided, track all guilds (safer default for not missing context).
-MESSAGE_CACHE_GUILD_IDS = set(_raw_cache_guilds) if _raw_cache_guilds else None
-if MESSAGE_CACHE_GUILD_IDS is not None and TARGET_GUILD_ID and TARGET_GUILD_ID != "0":
-    MESSAGE_CACHE_GUILD_IDS.add(TARGET_GUILD_ID)
+# Only track messages from the single configured cache guild.
+MESSAGE_CACHE_GUILD_IDS = {str(MESSAGE_CACHE_GUILD_ID)}
 
 
 def uid(value: Any) -> str:
@@ -219,8 +204,6 @@ def _truncate_log_text(value: str, limit: int = 260) -> str:
     return value[:limit] + "…"
 
 def should_track_messages(guild_id: int) -> bool:
-    if MESSAGE_CACHE_GUILD_IDS is None:
-        return True
     return str(guild_id) in MESSAGE_CACHE_GUILD_IDS
 
 if discord:
@@ -236,6 +219,16 @@ if discord:
     @bot_client.event
     async def on_ready():
         logging.info("Bot connected as %s (%s)", bot_client.user, getattr(bot_client.user, "id", "unknown"))
+        try:
+            await bot_client.change_presence(
+                status=discord.Status.online,
+                activity=discord.Activity(
+                    type=discord.ActivityType.watching,
+                    name="appeals",
+                ),
+            )
+        except Exception as exc:
+            logging.debug("Failed to set presence: %s", exc)
 
     @bot_client.event
     async def on_message(message):
@@ -1489,7 +1482,7 @@ async def health():
         "bot_online": online,
         "bot_task": bot_task_state,
         "target_guild_id": TARGET_GUILD_ID,
-        "message_cache_guild_ids": sorted(list(MESSAGE_CACHE_GUILD_IDS)) if MESSAGE_CACHE_GUILD_IDS else None,
+        "message_cache_guild_id": MESSAGE_CACHE_GUILD_ID,
         "supabase_ready": is_supabase_ready(),
         "supabase_context_table": SUPABASE_CONTEXT_TABLE,
     }

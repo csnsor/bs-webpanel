@@ -52,8 +52,10 @@ MESSAGE_CACHE_GUILD_IDS_RAW = os.getenv("MESSAGE_CACHE_GUILD_ID", "").strip()
 READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
 DEBUG_EVENTS = os.getenv("DEBUG_EVENTS", "false").lower() == "true"
-BOT_EVENT_LOGGING = os.getenv("BOT_EVENT_LOGGING", "").lower() in {"1", "true", "yes"} or DEBUG_EVENTS
-BOT_MESSAGE_LOG_CONTENT = os.getenv("BOT_MESSAGE_LOG_CONTENT", "").lower() in {"1", "true", "yes"} or DEBUG_EVENTS
+# Bot logging defaults to enabled so deployments have visibility into caching/ban events.
+BOT_EVENT_LOGGING = os.getenv("BOT_EVENT_LOGGING", "true").lower() in {"1", "true", "yes", "on"}
+# Message bodies can contain private data; keep disabled unless explicitly enabled (or DEBUG_EVENTS).
+BOT_MESSAGE_LOG_CONTENT = os.getenv("BOT_MESSAGE_LOG_CONTENT", "false").lower() in {"1", "true", "yes", "on"} or DEBUG_EVENTS
 
 OAUTH_SCOPES = "identify guilds.join"
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -127,6 +129,14 @@ async def startup_event():
     async def _run_bot():
         try:
             logging.info("Starting Discord bot gateway connection...")
+            logging.info(
+                "Bot logging enabled=%s message_content_logging=%s cache_guild_allowlist=%s",
+                BOT_EVENT_LOGGING,
+                BOT_MESSAGE_LOG_CONTENT,
+                ("all" if MESSAGE_CACHE_GUILD_IDS is None else len(MESSAGE_CACHE_GUILD_IDS)),
+            )
+            if BOT_EVENT_LOGGING:
+                logging.info("If message caching logs are missing, confirm the bot is online and has channel access + intents.")
             await bot_client.start(DISCORD_BOT_TOKEN)
         except asyncio.CancelledError:
             pass
@@ -2204,7 +2214,8 @@ async def status_page(request: Request, lang: Optional[str] = None):
 async def status_data(request: Request):
     session = read_user_session(request)
     if not session:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+        # Avoid noisy 401 logs from the landing-page live widget; no session means there's no user_id to query anyway.
+        return {"history": []}
     if not is_supabase_ready():
         return {"history": []}
     history = await fetch_appeal_history(session["uid"], limit=5)

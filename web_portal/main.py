@@ -2199,8 +2199,13 @@ async def home(request: Request, lang: Optional[str] = None):
         <div class="home-panel">
           <div class="card hero-card">
             <div class="hero-meta">
+              <div>
+                <h1>{strings['hero_title']}</h1>
+                <div class="badge">Official portal</div>
+                <p class="hero-sub" style="margin:8px 0 0;">{strings['hero_sub']}</p>
+              </div>
             </div>
-            <h1>{strings['hero_title']}</h1>
+
             <div class="hero-actions">
               {primary_action}
               {secondary_action}

@@ -37,6 +37,7 @@ DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")  # e.g. https://bs-appe
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_PUBLIC_KEY = os.getenv("DISCORD_PUBLIC_KEY")  # Required for interaction verification
 TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "0")
+TARGET_GUILD_NAME = os.getenv("TARGET_GUILD_NAME")
 MODERATOR_ROLE_ID = int(os.getenv("MODERATOR_ROLE_ID", "1353068159346671707"))
 APPEAL_CHANNEL_ID = int(os.getenv("APPEAL_CHANNEL_ID", "1352973388334764112"))
 APPEAL_LOG_CHANNEL_ID = int(os.getenv("APPEAL_LOG_CHANNEL_ID", "1353445286457901106"))
@@ -51,7 +52,8 @@ INVITE_LINK = "https://discord.gg/blockspin"
 MESSAGE_CACHE_GUILD_ID_DEFAULT = "1337420081382297682"
 MESSAGE_CACHE_GUILD_ID_RAW = (os.getenv("MESSAGE_CACHE_GUILD_ID") or MESSAGE_CACHE_GUILD_ID_DEFAULT).split(",")[0].strip()
 MESSAGE_CACHE_GUILD_ID = int(MESSAGE_CACHE_GUILD_ID_RAW or MESSAGE_CACHE_GUILD_ID_DEFAULT)
-READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
+# Accept/Decline should re-add users to the single BlockSpin guild.
+READD_GUILD_ID = str(MESSAGE_CACHE_GUILD_ID)
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
 DEBUG_EVENTS = os.getenv("DEBUG_EVENTS", "false").lower() == "true"
 # Bot logging defaults to enabled so deployments have visibility into caching/ban events.
@@ -95,25 +97,31 @@ async def app_lifespan(app: FastAPI):
         logging.warning("DISCORD_BOT_TOKEN missing; bot client not started.")
         raise RuntimeError("DISCORD_BOT_TOKEN missing; bot client cannot start.")
     if not _bot_task or _bot_task.done():
-        async def _run_bot():
-            try:
-                logging.info("Starting Discord bot gateway connection...")
-                logging.info(
-                    "Bot logging enabled=%s message_content_logging=%s cache_guild_allowlist=%s",
-                    BOT_EVENT_LOGGING,
-                    BOT_MESSAGE_LOG_CONTENT,
-                    MESSAGE_CACHE_GUILD_ID,
-                )
-                if BOT_EVENT_LOGGING:
+        async def _run_bot_forever():
+            backoff = 2.0
+            while True:
+                try:
+                    logging.info("Starting Discord bot gateway connection...")
                     logging.info(
-                        "If message caching logs are missing, confirm the bot is online and has channel access + intents."
+                        "Bot logging enabled=%s message_content_logging=%s cache_guild_allowlist=%s",
+                        BOT_EVENT_LOGGING,
+                        BOT_MESSAGE_LOG_CONTENT,
+                        MESSAGE_CACHE_GUILD_ID,
                     )
-                await bot_client.start(DISCORD_BOT_TOKEN)
-            except asyncio.CancelledError:
-                pass
-            except Exception as exc:
-                logging.exception("Discord bot task crashed: %s", exc)
-        _bot_task = asyncio.create_task(_run_bot())
+                    if BOT_EVENT_LOGGING:
+                        logging.info(
+                            "If message caching logs are missing, confirm the bot is online and has channel access + intents."
+                        )
+                    await bot_client.start(DISCORD_BOT_TOKEN)
+                    backoff = 2.0
+                except asyncio.CancelledError:
+                    break
+                except Exception as exc:
+                    logging.exception("Discord bot task crashed: %s", exc)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2.0, 60.0)
+
+        _bot_task = asyncio.create_task(_run_bot_forever())
     try:
         yield
     finally:
@@ -176,6 +184,7 @@ _processed_appeals: Dict[str, float] = {}  # {appeal_id: timestamp_processed}
 _declined_users: Dict[str, bool] = {}  # {user_id: True if appeal declined}
 _state_tokens: Dict[str, Tuple[str, float]] = {}  # {token: (ip, issued_at)}
 _status_data_cache: Dict[str, Tuple[dict, float]] = {}  # {user_id: (payload, ts)}
+_guild_name_cache: Dict[str, Tuple[str, float]] = {}  # {guild_id: (name, ts)}
 APPEAL_COOLDOWN_SECONDS = int(os.getenv("APPEAL_COOLDOWN_SECONDS", "300"))  # 5 minutes by default
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "900"))  # sessions expire after 15 minutes
 APPEAL_IP_MAX_REQUESTS = int(os.getenv("APPEAL_IP_MAX_REQUESTS", "8"))
@@ -187,6 +196,7 @@ CLEANUP_DM_INVITES = os.getenv("CLEANUP_DM_INVITES", "true").lower() == "true"
 PERSIST_SESSION_SECONDS = int(os.getenv("PERSIST_SESSION_SECONDS", str(7 * 24 * 3600)))  # keep users signed in
 SESSION_COOKIE_NAME = "bs_session"
 STATUS_DATA_CACHE_TTL_SECONDS = int(os.getenv("STATUS_DATA_CACHE_TTL_SECONDS", "5"))
+GUILD_NAME_CACHE_TTL_SECONDS = int(os.getenv("GUILD_NAME_CACHE_TTL_SECONDS", "3600"))
 
 # --- Bot & Cache Setup ---
 bot_client = None
@@ -234,6 +244,14 @@ if discord:
             )
         except Exception as exc:
             logging.debug("Failed to set presence: %s", exc)
+
+    @bot_client.event
+    async def on_disconnect():
+        logging.warning("Discord bot disconnected from gateway.")
+
+    @bot_client.event
+    async def on_resumed():
+        logging.info("Discord bot resumed gateway session.")
 
     @bot_client.event
     async def on_message(message):
@@ -402,6 +420,7 @@ a{ color:inherit; }
   justify-content:space-between;
   gap:16px;
   padding:0 2px;
+  flex-wrap:wrap;
 }
 
 .brand{
@@ -432,6 +451,51 @@ a{ color:inherit; }
   font-size:12.5px;
   color:var(--muted);
   margin-top:2px;
+}
+
+.live-banner{
+  flex:1;
+  min-width: 320px;
+  max-width: 560px;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  padding:10px 14px;
+  border-radius: 14px;
+  border:1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.03);
+}
+.live-banner .dot{
+  width:10px;
+  height:10px;
+  border-radius:50%;
+  background:#22c55e;
+  box-shadow:0 0 12px rgba(34,197,94,.6);
+  flex:0 0 auto;
+}
+.live-banner .dot.warn{
+  background:#f59e0b;
+  box-shadow:0 0 12px rgba(245,158,11,.45);
+}
+.live-banner .meta{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  min-width:0;
+}
+.live-banner .title{
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color: rgba(154,164,178,.95);
+}
+.live-banner .value{
+  font-size:13.5px;
+  color: rgba(237,242,247,.95);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
 }
 
 /* --- Utilities --- */
@@ -1172,6 +1236,23 @@ def format_timestamp(value: Any) -> str:
         return str(value)
 
 
+def format_relative(seconds: float) -> str:
+    try:
+        seconds = float(seconds)
+    except Exception:
+        return ""
+    seconds = max(0.0, seconds)
+    total = int(seconds)
+    days = total // 86400
+    hours = (total % 86400) // 3600
+    minutes = (total % 3600) // 60
+    if days > 0:
+        return f"{days}d {hours}h ago"
+    if hours > 0:
+        return f"{hours}h {minutes}m ago"
+    return f"{max(0, minutes)}m ago"
+
+
 def hash_value(raw: str) -> str:
     return hashlib.sha256(f"{SECRET_KEY}:{raw}".encode("utf-8", "ignore")).hexdigest()
 
@@ -1476,6 +1557,39 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     user_chip = strings.get("user_chip", "")
     script_block = strings.get("script_block")
     script_nonce = strings.get("script_nonce") or secrets.token_urlsafe(12)
+    base_script = """
+    (function() {
+      const banner = document.getElementById('liveBanner');
+      if (!banner) return;
+      const dot = document.getElementById('liveBannerDot');
+      const valueEl = document.getElementById('liveBannerValue');
+      async function tick() {
+        try {
+          const res = await fetch('/status/data', { headers: { 'Accept': 'application/json' }});
+          if (!res.ok) throw new Error('status ' + res.status);
+          const data = await res.json();
+          const history = data.history || [];
+          if (!history.length) {
+            valueEl.textContent = 'No recent updates.';
+            dot.classList.remove('warn');
+            return;
+          }
+          const latest = history[0];
+          const status = (latest.status || 'pending').toLowerCase();
+          const ref = latest.appeal_id || 'n/a';
+          const label = status.startsWith('accept') ? 'Accepted' : status.startsWith('decline') ? 'Declined' : 'Pending';
+          valueEl.textContent = label + ' · ref ' + ref;
+          dot.classList.remove('warn');
+        } catch (e) {
+          valueEl.textContent = 'Live updates unavailable.';
+          dot.classList.add('warn');
+        }
+      }
+      tick();
+      setInterval(tick, 15000);
+    })();
+    """
+    full_script = base_script + "\n" + (script_block or "")
     csp = (
         "default-src 'self'; "
         "img-src 'self' data: https://*.discordapp.com https://*.discord.com; "
@@ -1507,6 +1621,13 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
                 <span>Appeals Portal</span>
               </div>
             </div>
+            <div class="live-banner" id="liveBanner" aria-live="polite">
+              <span class="dot" id="liveBannerDot" aria-hidden="true"></span>
+              <div class="meta">
+                <div class="title">Live updates</div>
+                <div class="value" id="liveBannerValue">Loading…</div>
+              </div>
+            </div>
             {user_chip}
           </div>
 
@@ -1521,7 +1642,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         </div>
         
         <script nonce="{script_nonce}">
-            {script_block or ""}
+            {full_script}
         </script>
       </body>
     </html>
@@ -1771,6 +1892,33 @@ async def fetch_ban_if_exists(user_id: str) -> Optional[dict]:
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
+    return None
+
+
+async def fetch_guild_name(guild_id: str) -> Optional[str]:
+    if not guild_id or guild_id == "0":
+        return None
+    if TARGET_GUILD_NAME and str(guild_id) == str(TARGET_GUILD_ID):
+        return TARGET_GUILD_NAME
+
+    now = time.time()
+    cached = _guild_name_cache.get(str(guild_id))
+    if cached and (now - cached[1]) < GUILD_NAME_CACHE_TTL_SECONDS:
+        return cached[0]
+
+    try:
+        client = get_http_client()
+        resp = await client.get(
+            f"{DISCORD_API_BASE}/guilds/{guild_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        )
+        if resp.status_code == 200:
+            name = (resp.json() or {}).get("name")
+            if name:
+                _guild_name_cache[str(guild_id)] = (str(name), now)
+                return str(name)
+    except Exception:
+        pass
     return None
 
 
@@ -2401,6 +2549,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     await ensure_dm_guild_membership(user["id"])
 
     message_cache = await fetch_message_cache(user["id"])
+    guild_name = await fetch_guild_name(str(TARGET_GUILD_ID))
 
     # Fallback: if the ban event wasn't observed (e.g. bot restart), persist the best-available cache when the banned
     # user authenticates so moderators can still see context in Supabase.
@@ -2438,6 +2587,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     ban_reason_raw = ban.get("reason") or "No reason provided."
     ban_reason = html.escape(ban_reason_raw)
     user_id_label = html.escape(str(user["id"]))
+    ban_observed_rel = html.escape(format_relative(now - first_seen))
     ban_observed_at = html.escape(format_timestamp(int(first_seen)))
     appeal_deadline = html.escape(format_timestamp(int(window_expires_at)))
     cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
@@ -2505,15 +2655,19 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
           </form>
         </div>
         <div class="card">
-          <h2>{strings['ban_details']}</h2>
-          <div class="kv">
-            <div class="kv-row"><div class="k">User</div><div class="v">{uname}</div></div>
-            <div class="kv-row"><div class="k">User ID</div><div class="v">{user_id_label}</div></div>
-            <div class="kv-row"><div class="k">Server</div><div class="v">{html.escape(str(TARGET_GUILD_ID))}</div></div>
-            <div class="kv-row"><div class="k">Ban observed</div><div class="v">{ban_observed_at}</div></div>
-            <div class="kv-row"><div class="k">Appeal deadline</div><div class="v">{appeal_deadline}</div></div>
-            <div class="kv-row"><div class="k">Reason</div><div class="v">{ban_reason}</div></div>
-          </div>
+          <details class="details" open>
+            <summary>{strings['ban_details']}</summary>
+            <div class="details-body">
+              <div class="kv">
+                <div class="kv-row"><div class="k">User</div><div class="v">{uname}</div></div>
+                <div class="kv-row"><div class="k">User ID</div><div class="v">{user_id_label}</div></div>
+                <div class="kv-row"><div class="k">Server</div><div class="v">{html.escape(guild_name or TARGET_GUILD_NAME or "BlockSpin")}</div></div>
+                <div class="kv-row"><div class="k">Ban observed</div><div class="v">{ban_observed_rel} · {ban_observed_at}</div></div>
+                <div class="kv-row"><div class="k">Appeal deadline</div><div class="v">{appeal_deadline}</div></div>
+                <div class="kv-row"><div class="k">Reason</div><div class="v">{ban_reason}</div></div>
+              </div>
+            </div>
+          </details>
 
           <details class="details" {context_open}>
             <summary>{strings['messages_header']} <span style="color:var(--muted2); font-weight:700; letter-spacing:0; text-transform:none;">({context_count})</span></summary>

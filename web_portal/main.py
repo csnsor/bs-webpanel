@@ -52,6 +52,8 @@ MESSAGE_CACHE_GUILD_IDS_RAW = os.getenv("MESSAGE_CACHE_GUILD_ID", "").strip()
 READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
 DEBUG_EVENTS = os.getenv("DEBUG_EVENTS", "false").lower() == "true"
+BOT_EVENT_LOGGING = os.getenv("BOT_EVENT_LOGGING", "").lower() in {"1", "true", "yes"} or DEBUG_EVENTS
+BOT_MESSAGE_LOG_CONTENT = os.getenv("BOT_MESSAGE_LOG_CONTENT", "").lower() in {"1", "true", "yes"} or DEBUG_EVENTS
 
 OAUTH_SCOPES = "identify guilds.join"
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -200,6 +202,12 @@ if MESSAGE_CACHE_GUILD_IDS is not None and TARGET_GUILD_ID and TARGET_GUILD_ID !
 def uid(value: Any) -> str:
     return str(value)
 
+def _truncate_log_text(value: str, limit: int = 260) -> str:
+    value = (value or "").replace("\r", "\\r").replace("\n", "\\n")
+    if len(value) <= limit:
+        return value
+    return value[:limit] + "…"
+
 def should_track_messages(guild_id: int) -> bool:
     if MESSAGE_CACHE_GUILD_IDS is None:
         return True
@@ -239,6 +247,20 @@ if discord:
             if DEBUG_EVENTS:
                 print(f"[DEBUG] Dropping empty content message from {message.author.name}")
             return
+        if BOT_EVENT_LOGGING:
+            user_label = getattr(message.author, "global_name", None) or getattr(message.author, "display_name", None) or getattr(message.author, "name", "unknown")
+            channel_name = getattr(message.channel, "name", "unknown")
+            log_content = _truncate_log_text(content) if BOT_MESSAGE_LOG_CONTENT else f"<len={len(content)}>"
+            logging.info(
+                "[msg_cache] guild=%s channel=%s(#%s) user=%s(%s) msg=%s content=%s",
+                message.guild.id,
+                message.channel.id,
+                channel_name,
+                user_id,
+                user_label,
+                getattr(message, "id", "unknown"),
+                log_content,
+            )
         ts_str = message.created_at.isoformat()
         entry = {
             "content": content,
@@ -264,6 +286,10 @@ if discord:
         cached_msgs = list(_message_buffer.get(user_id, []))
         if not cached_msgs:
             cached_msgs = _get_recent_message_context(user_id, 15)
+            if BOT_EVENT_LOGGING:
+                logging.info("[ban_cache] user=%s guild=%s source=recent_context msgs=%s", user_id, guild.id, len(cached_msgs))
+        elif BOT_EVENT_LOGGING:
+            logging.info("[ban_cache] user=%s guild=%s source=ram_buffer msgs=%s", user_id, guild.id, len(cached_msgs))
 
         if is_supabase_ready():
             logging.info(
@@ -272,7 +298,7 @@ if discord:
                 len(cached_msgs),
                 SUPABASE_CONTEXT_TABLE,
             )
-            await supabase_request(
+            result = await supabase_request(
                 "post",
                 SUPABASE_CONTEXT_TABLE,
                 params={"on_conflict": "user_id"},
@@ -283,7 +309,14 @@ if discord:
                 },
                 prefer="resolution=merge-duplicates,return=representation",
             )
-            logging.info("Stored banned context user=%s msgs=%s", user_id, len(cached_msgs))
+            if BOT_EVENT_LOGGING:
+                logging.info(
+                    "[ban_supabase] user=%s guild=%s ok=%s returned_rows=%s",
+                    user_id,
+                    guild.id,
+                    bool(result is not None),
+                    (len(result) if isinstance(result, list) else (1 if isinstance(result, dict) else 0)),
+                )
 
         _message_buffer.pop(user_id, None)
         _recent_message_context.pop(user_id, None)
@@ -1775,6 +1808,8 @@ async def maybe_snapshot_messages(user_id: str, guild_id: str):
     entries = list(_message_buffer.get(user_id, []))
     if not entries:
         return
+    if BOT_EVENT_LOGGING and DEBUG_EVENTS:
+        logging.info("[snapshot] user=%s guild=%s msgs=%s", user_id, guild_id, len(entries[-15:]))
     await persist_message_snapshot(user_id, entries[-15:])
 
 

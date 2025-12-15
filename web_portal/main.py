@@ -118,12 +118,32 @@ async def startup_event():
     if not DISCORD_BOT_TOKEN:
         logging.warning("DISCORD_BOT_TOKEN missing; bot client not started.")
         raise RuntimeError("DISCORD_BOT_TOKEN missing; bot client cannot start.")
-    try:
-        await bot_client.login(DISCORD_BOT_TOKEN)
-    except Exception as exc:
-        logging.exception("Discord bot login failed: %s", exc)
-        raise RuntimeError("Discord bot token is invalid or missing required intents.") from exc
-    asyncio.create_task(bot_client.connect())
+    global _bot_task
+    if _bot_task and not _bot_task.done():
+        return
+
+    async def _run_bot():
+        try:
+            logging.info("Starting Discord bot gateway connection...")
+            await bot_client.start(DISCORD_BOT_TOKEN)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logging.exception("Discord bot task crashed: %s", exc)
+
+    _bot_task = asyncio.create_task(_run_bot())
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global _bot_task
+    if bot_client:
+        try:
+            await bot_client.close()
+        except Exception:
+            pass
+    if _bot_task and not _bot_task.done():
+        _bot_task.cancel()
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
@@ -161,6 +181,7 @@ SESSION_COOKIE_NAME = "bs_session"
 
 # --- Bot & Cache Setup ---
 bot_client = None
+_bot_task: Optional[asyncio.Task] = None
 _message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
 _recent_message_context: Dict[str, Tuple[List[dict], float]] = {}
 RECENT_MESSAGE_CACHE_TTL = int(os.getenv("RECENT_MESSAGE_CACHE_TTL", "3600"))
@@ -170,9 +191,10 @@ _raw_cache_guilds = [
     for gid in MESSAGE_CACHE_GUILD_IDS_RAW.split(",")
     if gid.strip()
 ]
-if TARGET_GUILD_ID and TARGET_GUILD_ID != "0":
-    _raw_cache_guilds.append(TARGET_GUILD_ID)
+# If no allowlist is provided, track all guilds (safer default for not missing context).
 MESSAGE_CACHE_GUILD_IDS = set(_raw_cache_guilds) if _raw_cache_guilds else None
+if MESSAGE_CACHE_GUILD_IDS is not None and TARGET_GUILD_ID and TARGET_GUILD_ID != "0":
+    MESSAGE_CACHE_GUILD_IDS.add(TARGET_GUILD_ID)
 
 
 def uid(value: Any) -> str:
@@ -244,6 +266,12 @@ if discord:
             cached_msgs = _get_recent_message_context(user_id, 15)
 
         if is_supabase_ready():
+            logging.info(
+                "Upserting banned context user=%s msgs=%s table=%s",
+                user_id,
+                len(cached_msgs),
+                SUPABASE_CONTEXT_TABLE,
+            )
             await supabase_request(
                 "post",
                 SUPABASE_CONTEXT_TABLE,
@@ -253,7 +281,7 @@ if discord:
                     "messages": cached_msgs,
                     "banned_at": int(time.time()),
                 },
-                prefer="resolution=merge-duplicates",
+                prefer="resolution=merge-duplicates,return=representation",
             )
             logging.info("Stored banned context user=%s msgs=%s", user_id, len(cached_msgs))
 
@@ -1394,6 +1422,36 @@ def wants_html(request: Request) -> bool:
     return "text/html" in accept or "*/*" in accept
 
 
+@app.get("/health")
+async def health():
+    online = False
+    try:
+        online = bool(bot_client and getattr(bot_client, "is_ready", lambda: False)())
+    except Exception:
+        online = False
+    bot_task_state = None
+    try:
+        if _bot_task is None:
+            bot_task_state = "not_started"
+        elif _bot_task.cancelled():
+            bot_task_state = "cancelled"
+        elif _bot_task.done():
+            bot_task_state = "done"
+        else:
+            bot_task_state = "running"
+    except Exception:
+        bot_task_state = "unknown"
+    return {
+        "ok": True,
+        "bot_online": online,
+        "bot_task": bot_task_state,
+        "target_guild_id": TARGET_GUILD_ID,
+        "message_cache_guild_ids": sorted(list(MESSAGE_CACHE_GUILD_IDS)) if MESSAGE_CACHE_GUILD_IDS else None,
+        "supabase_ready": is_supabase_ready(),
+        "supabase_context_table": SUPABASE_CONTEXT_TABLE,
+    }
+
+
 def render_error(title: str, message: str, status_code: int = 400, lang: str = "en", strings: Optional[Dict[str, str]] = None) -> HTMLResponse:
     safe_title = html.escape(title)
     safe_msg = html.escape(message)
@@ -1730,7 +1788,7 @@ async def persist_message_snapshot(user_id: str, messages: List[dict]):
             "user_message_snapshots",
             params={"on_conflict": "user_id"},
             payload={"user_id": user_id, "messages": messages[-15:]},
-            prefer="resolution=merge-duplicates",
+            prefer="resolution=merge-duplicates,return=representation",
         )
     except Exception as exc:
         logging.warning("Snapshot persist failed for %s: %s", user_id, exc)
@@ -2237,17 +2295,12 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     # Fallback: if the ban event wasn't observed (e.g. bot restart), persist the best-available cache when the banned
     # user authenticates so moderators can still see context in Supabase.
     if is_supabase_ready() and message_cache:
-        existing_context = await supabase_request(
-            "get",
+        logging.info(
+            "Upserting banned context from callback user=%s msgs=%s table=%s",
+            user["id"],
+            len(message_cache),
             SUPABASE_CONTEXT_TABLE,
-            params={"user_id": f"eq.{user['id']}", "limit": 1},
         )
-        existing_banned_at = None
-        if existing_context:
-            try:
-                existing_banned_at = int(existing_context[0].get("banned_at") or 0) or None
-            except Exception:
-                existing_banned_at = None
         await supabase_request(
             "post",
             SUPABASE_CONTEXT_TABLE,
@@ -2255,9 +2308,9 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
             payload={
                 "user_id": user["id"],
                 "messages": message_cache,
-                "banned_at": existing_banned_at or int(time.time()),
+                "banned_at": int(time.time()),
             },
-            prefer="resolution=merge-duplicates",
+            prefer="resolution=merge-duplicates,return=representation",
         )
 
     session = serializer.dumps(

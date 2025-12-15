@@ -37,6 +37,7 @@ DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI")  # e.g. https://bs-appe
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_TOKEN") or os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_PUBLIC_KEY = os.getenv("DISCORD_PUBLIC_KEY")  # Required for interaction verification
 TARGET_GUILD_ID = os.getenv("TARGET_GUILD_ID", "0")
+TARGET_GUILD_NAME = os.getenv("TARGET_GUILD_NAME")
 MODERATOR_ROLE_ID = int(os.getenv("MODERATOR_ROLE_ID", "1353068159346671707"))
 APPEAL_CHANNEL_ID = int(os.getenv("APPEAL_CHANNEL_ID", "1352973388334764112"))
 APPEAL_LOG_CHANNEL_ID = int(os.getenv("APPEAL_LOG_CHANNEL_ID", "1353445286457901106"))
@@ -49,7 +50,8 @@ SUPABASE_SESSION_TABLE = "discord-appeal-sessions"
 SUPABASE_CONTEXT_TABLE = "banned_user_context"
 INVITE_LINK = "https://discord.gg/blockspin"
 MESSAGE_CACHE_GUILD_IDS_RAW = os.getenv("MESSAGE_CACHE_GUILD_ID", "1337420081382297682")
-READD_GUILD_ID = os.getenv("READD_GUILD_ID", "1065973360040890418")
+# Accept/Decline should re-add users to the single BlockSpin guild.
+READD_GUILD_ID = (MESSAGE_CACHE_GUILD_IDS_RAW.split(",")[0].strip() or "1337420081382297682")
 LIBRETRANSLATE_URL = os.getenv("LIBRETRANSLATE_URL", "https://libretranslate.de/translate")
 DEBUG_EVENTS = os.getenv("DEBUG_EVENTS", "false").lower() == "true"
 # By default, do not persist rolling message snapshots to Supabase. We keep the last 15 per-user in RAM and only write
@@ -152,6 +154,7 @@ _processed_appeals: Dict[str, float] = {}  # {appeal_id: timestamp_processed}
 _declined_users: Dict[str, bool] = {}  # {user_id: True if appeal declined}
 _state_tokens: Dict[str, Tuple[str, float]] = {}  # {token: (ip, issued_at)}
 _status_data_cache: Dict[str, Tuple[dict, float]] = {}  # {user_id: (payload, ts)}
+_guild_name_cache: Dict[str, Tuple[str, float]] = {}  # {guild_id: (name, ts)}
 APPEAL_COOLDOWN_SECONDS = int(os.getenv("APPEAL_COOLDOWN_SECONDS", "300"))  # 5 minutes by default
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "900"))  # sessions expire after 15 minutes
 APPEAL_IP_MAX_REQUESTS = int(os.getenv("APPEAL_IP_MAX_REQUESTS", "8"))
@@ -163,6 +166,7 @@ CLEANUP_DM_INVITES = os.getenv("CLEANUP_DM_INVITES", "true").lower() == "true"
 PERSIST_SESSION_SECONDS = int(os.getenv("PERSIST_SESSION_SECONDS", str(7 * 24 * 3600)))  # keep users signed in
 SESSION_COOKIE_NAME = "bs_session"
 STATUS_DATA_CACHE_TTL_SECONDS = int(os.getenv("STATUS_DATA_CACHE_TTL_SECONDS", "5"))
+GUILD_NAME_CACHE_TTL_SECONDS = int(os.getenv("GUILD_NAME_CACHE_TTL_SECONDS", "3600"))
 
 # --- Bot & Cache Setup ---
 bot_client = None
@@ -841,6 +845,23 @@ def format_timestamp(value: Any) -> str:
         return str(value)
 
 
+def format_relative(seconds: float) -> str:
+    try:
+        seconds = float(seconds)
+    except Exception:
+        return ""
+    seconds = max(0.0, seconds)
+    total = int(seconds)
+    days = total // 86400
+    hours = (total % 86400) // 3600
+    minutes = (total % 3600) // 60
+    if days > 0:
+        return f"{days}d {hours}h ago"
+    if hours > 0:
+        return f"{hours}h {minutes}m ago"
+    return f"{max(0, minutes)}m ago"
+
+
 def hash_value(raw: str) -> str:
     return hashlib.sha256(f"{SECRET_KEY}:{raw}".encode("utf-8", "ignore")).hexdigest()
 
@@ -1410,6 +1431,33 @@ async def fetch_ban_if_exists(user_id: str) -> Optional[dict]:
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
+    return None
+
+
+async def fetch_guild_name(guild_id: str) -> Optional[str]:
+    if not guild_id or guild_id == "0":
+        return None
+    if TARGET_GUILD_NAME and str(guild_id) == str(TARGET_GUILD_ID):
+        return TARGET_GUILD_NAME
+
+    now = time.time()
+    cached = _guild_name_cache.get(str(guild_id))
+    if cached and (now - cached[1]) < GUILD_NAME_CACHE_TTL_SECONDS:
+        return cached[0]
+
+    try:
+        client = get_http_client()
+        resp = await client.get(
+            f"{DISCORD_API_BASE}/guilds/{guild_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        )
+        if resp.status_code == 200:
+            name = (resp.json() or {}).get("name")
+            if name:
+                _guild_name_cache[str(guild_id)] = (str(name), now)
+                return str(name)
+    except Exception:
+        pass
     return None
 
 
@@ -2019,6 +2067,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     await ensure_dm_guild_membership(user["id"])
 
     message_cache = await fetch_message_cache(user["id"])
+    guild_name = await fetch_guild_name(str(TARGET_GUILD_ID))
 
     session = serializer.dumps(
         {
@@ -2035,6 +2084,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     ban_reason_raw = ban.get("reason") or "No reason provided."
     ban_reason = html.escape(ban_reason_raw)
     user_id_label = html.escape(str(user["id"]))
+    ban_observed_rel = html.escape(format_relative(now - first_seen))
     ban_observed_at = html.escape(format_timestamp(int(first_seen)))
     appeal_deadline = html.escape(format_timestamp(int(window_expires_at)))
     cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
@@ -2102,15 +2152,19 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
           </form>
         </div>
         <div class="card">
-          <h2>{strings['ban_details']}</h2>
-          <div class="kv">
-            <div class="kv-row"><div class="k">User</div><div class="v">{uname}</div></div>
-            <div class="kv-row"><div class="k">User ID</div><div class="v">{user_id_label}</div></div>
-            <div class="kv-row"><div class="k">Server</div><div class="v">{html.escape(str(TARGET_GUILD_ID))}</div></div>
-            <div class="kv-row"><div class="k">Ban observed</div><div class="v">{ban_observed_at}</div></div>
-            <div class="kv-row"><div class="k">Appeal deadline</div><div class="v">{appeal_deadline}</div></div>
-            <div class="kv-row"><div class="k">Reason</div><div class="v">{ban_reason}</div></div>
-          </div>
+          <details class="details" open>
+            <summary>{strings['ban_details']}</summary>
+            <div class="details-body">
+              <div class="kv">
+                <div class="kv-row"><div class="k">User</div><div class="v">{uname}</div></div>
+                <div class="kv-row"><div class="k">User ID</div><div class="v">{user_id_label}</div></div>
+                <div class="kv-row"><div class="k">Server</div><div class="v">{html.escape(guild_name or TARGET_GUILD_NAME or "BlockSpin")}</div></div>
+                <div class="kv-row"><div class="k">Ban observed</div><div class="v">{ban_observed_rel} · {ban_observed_at}</div></div>
+                <div class="kv-row"><div class="k">Appeal deadline</div><div class="v">{appeal_deadline}</div></div>
+                <div class="kv-row"><div class="k">Reason</div><div class="v">{ban_reason}</div></div>
+              </div>
+            </div>
+          </details>
 
           <details class="details" {context_open}>
             <summary>{strings['messages_header']} <span style="color:var(--muted2); font-weight:700; letter-spacing:0; text-transform:none;">({context_count})</span></summary>

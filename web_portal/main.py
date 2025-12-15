@@ -2317,7 +2317,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         {
             "uid": user["id"],
             "uname": f"{user['username']}#{user.get('discriminator','0')}",
-            "ban_reason": ban.get("reason", "No reason provided."),
+            "ban_reason": ban.get("reason") or "No reason provided.",
             "iat": time.time(),
             "ban_first_seen": first_seen,
             "lang": current_lang,
@@ -2325,7 +2325,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         }
     )
     uname = html.escape(f"{user['username']}#{user.get('discriminator','0')}")
-    ban_reason = html.escape(ban.get("reason", "No reason provided."))
+    ban_reason = html.escape(ban.get("reason") or "No reason provided.")
     cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
     message_cache_html = ""
     if message_cache:
@@ -2451,7 +2451,7 @@ async def submit(
     await post_appeal_embed(
         appeal_id=appeal_id,
         user=user,
-        ban_reason=data.get("ban_reason", "No reason provided."),
+        ban_reason=data.get("ban_reason") or "No reason provided.",
         ban_evidence=evidence or "No evidence provided.",
         appeal_reason=reason_for_embed,
     )
@@ -2460,7 +2460,7 @@ async def submit(
     await log_appeal_to_supabase(
         appeal_id,
         user,
-        data.get("ban_reason", "No reason provided."),
+        data.get("ban_reason") or "No reason provided.",
         evidence or "No evidence provided.",
         appeal_reason_en,
         appeal_reason,

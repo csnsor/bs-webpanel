@@ -300,9 +300,12 @@ body{
     radial-gradient(900px 600px at 15% 20%, rgba(88,101,242,.18), transparent 55%),
     radial-gradient(900px 600px at 85% 80%, rgba(239,68,68,.10), transparent 55%),
     linear-gradient(180deg, var(--bg), var(--bg2));
+  background-repeat:no-repeat;
+  background-attachment:fixed;
   color:var(--text);
   display:grid;
   place-items:center;
+  min-height:100vh;
   padding:24px;
 }
 
@@ -671,6 +674,59 @@ input:focus, textarea:focus{
   line-height:1.5;
   color: rgba(237,242,247,.95);
   word-break:break-word;
+}
+
+/* --- Compact key/value rows + collapsible sections --- */
+.kv{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.kv-row{
+  display:flex;
+  justify-content:space-between;
+  gap:14px;
+  padding:10px 12px;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:12px;
+  background: rgba(255,255,255,.03);
+}
+.kv-row .k{
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color: var(--muted2);
+}
+.kv-row .v{
+  font-size:13.5px;
+  color: rgba(255,255,255,.92);
+  text-align:right;
+  word-break:break-word;
+}
+.details{
+  margin-top:12px;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:14px;
+  background: rgba(255,255,255,.02);
+  overflow:hidden;
+}
+.details summary{
+  cursor:pointer;
+  list-style:none;
+  padding:12px 14px;
+  font-weight:800;
+  font-size:12px;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  color: rgba(255,255,255,.88);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.details summary::-webkit-details-marker{ display:none; }
+.details .details-body{
+  padding:0 14px 14px;
 }
 
 /* --- Footer --- */
@@ -1893,7 +1949,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
 
     history_html = ""
     if is_supabase_ready():
-        history = await fetch_appeal_history(user["id"])
+        history = await fetch_appeal_history(user["id"], limit=10)
         history_html = render_history_items(history)
     else:
         history_html = "<div class='muted'></div>"
@@ -1968,7 +2024,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         {
             "uid": user["id"],
             "uname": f"{user['username']}#{user.get('discriminator','0')}",
-            "ban_reason": ban.get("reason", "No reason provided."),
+            "ban_reason": ban.get("reason") or "No reason provided.",
             "iat": time.time(),
             "ban_first_seen": first_seen,
             "lang": current_lang,
@@ -1976,7 +2032,11 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         }
     )
     uname = html.escape(f"{user['username']}#{user.get('discriminator','0')}")
-    ban_reason = html.escape(ban.get("reason", "No reason provided."))
+    ban_reason_raw = ban.get("reason") or "No reason provided."
+    ban_reason = html.escape(ban_reason_raw)
+    user_id_label = html.escape(str(user["id"]))
+    ban_observed_at = html.escape(format_timestamp(int(first_seen)))
+    appeal_deadline = html.escape(format_timestamp(int(window_expires_at)))
     cooldown_minutes = max(1, APPEAL_COOLDOWN_SECONDS // 60)
     message_cache_html = ""
     if message_cache:
@@ -1997,10 +2057,35 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         message_cache_html = f"<div class='chat-box'>{''.join(rows)}</div>"
     else:
         message_cache_html = f"<div class='muted' style='padding:10px; border:1px dashed var(--border); border-radius:8px;'>{strings['no_messages']}</div>"
+
+    context_count = len(message_cache) if message_cache else 0
+    context_open = "open" if context_count else ""
+    window_script = """
+      <script>
+        (function(){
+          const el = document.getElementById('appealWindowRemaining');
+          if(!el) return;
+          const expiresSeconds = parseInt(el.dataset.expires || '0', 10);
+          if(!expiresSeconds) return;
+          const expiresMs = expiresSeconds * 1000;
+          function format(ms){
+            const total = Math.max(0, Math.floor(ms / 1000));
+            const days = Math.floor(total / 86400);
+            const hours = Math.floor((total % 86400) / 3600);
+            return `${days}d ${hours}h`;
+          }
+          function tick(){
+            el.textContent = format(expiresMs - Date.now());
+          }
+          tick();
+          setInterval(tick, 30000);
+        })();
+      </script>
+    """
     content = f"""
       <div class="grid-2">
         <div class="form-card">
-          <div class="badge">Window: {max(1, window_remaining // 60)} minutes left</div>
+          <div class="badge">Window remaining: <span id="appealWindowRemaining" data-expires="{int(window_expires_at)}"></span></div>
           <h2 style="margin:8px 0;">Appeal your BlockSpin ban</h2>
           <p class="muted">One appeal per ban. Include context, evidence, and what you will change.</p>
           <form class="form" action="/submit" method="post">
@@ -2015,25 +2100,33 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
             </div>
             <button class="btn" type="submit">Submit appeal</button>
           </form>
-          <div class="callout" style="margin-top:10px;">We keep you signed in so you can check your appeal status without re-authenticating.</div>
         </div>
         <div class="card">
           <h2>{strings['ban_details']}</h2>
-          <p class="muted"><strong>User:</strong> {uname}</p>
-          <p class="muted"><strong>Ban reason:</strong> {ban_reason}</p>
-          <div style="margin-top:12px;">
-            <h3 style="margin:0 0 6px;">{strings['messages_header']}</h3>
-            {message_cache_html}
+          <div class="kv">
+            <div class="kv-row"><div class="k">User</div><div class="v">{uname}</div></div>
+            <div class="kv-row"><div class="k">User ID</div><div class="v">{user_id_label}</div></div>
+            <div class="kv-row"><div class="k">Server</div><div class="v">{html.escape(str(TARGET_GUILD_ID))}</div></div>
+            <div class="kv-row"><div class="k">Ban observed</div><div class="v">{ban_observed_at}</div></div>
+            <div class="kv-row"><div class="k">Appeal deadline</div><div class="v">{appeal_deadline}</div></div>
+            <div class="kv-row"><div class="k">Reason</div><div class="v">{ban_reason}</div></div>
           </div>
-          <div style="margin-top:12px;">
-            <h3 style="margin:0 0 6px;">Your history</h3>
-            {history_html}
-          </div>
+
+          <details class="details" {context_open}>
+            <summary>{strings['messages_header']} <span style="color:var(--muted2); font-weight:700; letter-spacing:0; text-transform:none;">({context_count})</span></summary>
+            <div class="details-body">{message_cache_html}</div>
+          </details>
+
+          <details class="details">
+            <summary>Your history</summary>
+            <div class="details-body">{history_html}</div>
+          </details>
           <div class="btn-row" style="margin-top:10px;">
             <a class="btn secondary" href="/">Back home</a>
           </div>
         </div>
       </div>
+      {window_script}
     """
     return respond(content, "Appeal your ban", 200)
 
@@ -2153,8 +2246,12 @@ async def submit(
 
 # --- Discord interactions (button handling) ---
 def verify_signature(request: Request, body: bytes) -> bool:
-    import nacl.signing
-    import nacl.exceptions
+    try:
+        import nacl.signing  # type: ignore
+        import nacl.exceptions  # type: ignore
+    except Exception:
+        logging.error('PyNaCl is required for Discord signature verification. Install "PyNaCl".')
+        return False
 
     signature = request.headers.get("X-Signature-Ed25519")
     timestamp = request.headers.get("X-Signature-Timestamp")

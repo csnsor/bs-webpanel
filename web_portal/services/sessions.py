@@ -97,6 +97,7 @@ def read_user_session(request: Request) -> Optional[dict]:
             return None
         return data
     except BadSignature:
+        logging.warning("Invalid session cookie signature. Session potentially tampered with or corrupt.")
         return None
 
 

@@ -51,7 +51,7 @@ def persist_session(
     # 2. Else if roblox_display_name is provided, use it.
     # 3. Else, if a display_name exists in the session from previous data, preserve it.
     # 4. Otherwise, ensure display_name is explicitly set to None if no new value is provided.
-    if discord_display_display_name is not None:
+    if discord_display_name is not None:
         session["display_name"] = discord_display_name
     elif roblox_display_name is not None:
         session["display_name"] = roblox_display_name

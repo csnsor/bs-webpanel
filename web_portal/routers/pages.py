@@ -1022,13 +1022,13 @@ async def logout():
     return resp
 
 
+
 @router.get("/callback")
 async def callback(request: Request, code: str, state: str, lang: Optional[str] = None):
     """Handle Discord OAuth callback."""
     auth_data = await AuthService.handle_discord_callback(request, code, state, lang)
     user = auth_data["user"]
     current_lang = auth_data["lang"]
-    ip = auth_data["ip"]
     
     strings = await get_strings(current_lang)
     strings = dict(strings)
@@ -1036,6 +1036,14 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
     display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
     
+    # Check if a Roblox session already exists
+    roblox_session = read_user_session(request)
+    if roblox_session and "ruid" in roblox_session:
+        # The user is already in a Roblox appeal flow, just link the Discord account
+        response = RedirectResponse("/oauth/roblox/callback")
+        persist_user_session(request, response, user["id"], uname_label, display_name=display_name)
+        return response
+
     # Check if user is eligible to appeal
     ban = await fetch_ban_if_exists(user["id"])
     eligible, reason = await AppealService.check_appeal_eligibility(user["id"], ban)
@@ -1049,12 +1057,14 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
                 <a class="btn" href="/">Return home</a>
               </div>
             """
-            return HTMLResponse(
+            resp = HTMLResponse(
                 render_page("Appeal declined", content, lang=current_lang, strings=strings), 
                 status_code=403, 
                 headers={"Cache-Control": "no-store"}
             )
-        
+            persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
+            return resp
+
         elif reason == "No active ban":
             content = f"""
               <div class="card status">
@@ -1062,11 +1072,13 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
                 <a class="btn" href="/">Back home</a>
               </div>
             """
-            return HTMLResponse(
+            resp = HTMLResponse(
                 render_page("No active ban", content, lang=current_lang, strings=strings), 
                 status_code=200, 
                 headers={"Cache-Control": "no-store"}
             )
+            persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
+            return resp
         
         elif reason == "Appeal window closed":
             content = f"""
@@ -1078,11 +1090,13 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
               </div>
               <div class="actions"><a class="btn secondary" href="/">Return home</a></div>
             """
-            return HTMLResponse(
+            resp = HTMLResponse(
                 render_page("Appeal window closed", content, lang=current_lang, strings=strings), 
                 status_code=403, 
                 headers={"Cache-Control": "no-store"}
             )
+            persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
+            return resp
         
         elif reason == "Appeal already submitted":
             content = f"""
@@ -1094,11 +1108,13 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
               </div>
               <div class="actions"><a class="btn secondary" href="/">Return home</a></div>
             """
-            return HTMLResponse(
+            resp = HTMLResponse(
                 render_page("Appeal already submitted", content, lang=current_lang, strings=strings), 
                 status_code=409, 
                 headers={"Cache-Control": "no-store"}
             )
+            persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
+            return resp
     
     # Ensure user is in DM guild
     await ensure_dm_guild_membership(user["id"])
@@ -1147,6 +1163,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     )
 
 
+
 @router.get("/oauth/roblox/callback")
 async def roblox_callback(request: Request, code: str, state: str, lang: Optional[str] = None):
     """Handle Roblox OAuth callback."""
@@ -1171,11 +1188,13 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
             <a class="btn" href="/">Back home</a>
           </div>
         """
-        return HTMLResponse(
+        resp = HTMLResponse(
             render_page("No active ban", content, lang=current_lang, strings=strings), 
             status_code=200, 
             headers={"Cache-Control": "no-store"}
         )
+        persist_roblox_user_session(request, resp, user_id, uname_label, display_name=display_name)
+        return resp
     
     # Create session token
     ban_history = await roblox_api.get_ban_history(user_id)

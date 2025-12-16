@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import List, Optional
 
 import httpx
 from fastapi import HTTPException
@@ -308,33 +308,59 @@ async def post_appeal_embed(
 
 
 async def post_roblox_appeal_embed(
-    appeal_id: str,
+    appeal_id: int,
     roblox_username: str,
     roblox_id: str,
     short_ban_reason: str,
     appeal_reason: str,
-) -> None:
-    """Posts a simplified embed for a Roblox appeal to the designated channel."""
+    discord_user_id: Optional[str],
+) -> Optional[str]: # Return message ID
+    """Posts a simplified embed for a Roblox appeal to the designated channel with interactive buttons."""
     embed = {
         "title": f"Roblox Appeal #{appeal_id}",
         "color": 0xFF0000,  # Red for Roblox
         "description": (
-            f"**User:** {roblox_username}\n"
+            f"**User:** {roblox_username} (Roblox ID: {roblox_id})\n"
+            f"**Discord User:** {'<@' + discord_user_id + '>' if discord_user_id else 'N/A'}\n"
             f"**Ban reason:** {short_ban_reason}\n"
             f"**Appeal:** {appeal_reason}"
         ),
-        "footer": {"text": f"Roblox User ID: {roblox_id}"},
+        "footer": {"text": f"Appeal ID: {appeal_id}"},
         "url": f"https://www.roblox.com/users/{roblox_id}/profile",
     }
+
+    components = []
+    if discord_user_id: # Only show buttons if Discord user is linked
+        components.append(
+            {
+                "type": 1, # ActionRow
+                "components": [
+                    {
+                        "type": 2, # Button
+                        "style": 3, # Green
+                        "label": "Approve",
+                        "custom_id": f"roblox_appeal_accept:{appeal_id}:{roblox_id}:{discord_user_id}",
+                    },
+                    {
+                        "type": 2, # Button
+                        "style": 4, # Red
+                        "label": "Decline",
+                        "custom_id": f"roblox_appeal_decline:{appeal_id}:{roblox_id}:{discord_user_id}",
+                    },
+                ],
+            }
+        )
+
     client = get_http_client()
     resp = await client.post(
         f"{DISCORD_API_BASE}/channels/{ROBLOX_APPEAL_CHANNEL_ID}/messages",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-        json={"embeds": [embed]},
+        json={"embeds": [embed], "components": components},
     )
     if resp.status_code == 429:
         raise HTTPException(status_code=429, detail="Discord is rate limiting. Please retry in a minute.")
     resp.raise_for_status()
+    return resp.json().get("id")
 
 
 async def dm_user(user_id: str, embed: dict) -> bool:
@@ -359,3 +385,51 @@ async def dm_user(user_id: str, embed: dict) -> bool:
     if delivered:
         await maybe_remove_from_dm_guild(user_id)
     return delivered
+
+
+async def unban_user_from_guild(user_id: str, guild_id: str) -> bool:
+    """
+    Unbans a user from a specific Discord guild.
+    """
+    client = get_http_client()
+    try:
+        resp = await client.delete(
+            f"{DISCORD_API_BASE}/guilds/{guild_id}/bans/{user_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        )
+        resp.raise_for_status()
+        return True
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404: # User not banned
+            logging.info(f"Attempted to unban user {user_id} from guild {guild_id}, but user was not banned.")
+            return True # Consider it successful if they weren't banned in the first place
+        logging.error(f"Failed to unban user {user_id} from guild {guild_id}: {exc} - {exc.response.text}")
+        return False
+    except Exception as exc:
+        logging.error(f"Error unbanning user {user_id} from guild {guild_id}: {exc}")
+        return False
+
+
+async def edit_discord_message(
+    channel_id: str, message_id: str, embeds: List[dict], components: Optional[List[dict]] = None
+) -> Optional[dict]:
+    """
+    Edits an existing Discord message.
+    """
+    client = get_http_client()
+    payload = {"embeds": embeds}
+    if components is not None:
+        payload["components"] = components
+    try:
+        resp = await client.patch(
+            f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            json=payload,
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        logging.error(f"Error editing Discord message {message_id} in channel {channel_id}: {exc}")
+        return None
+
+

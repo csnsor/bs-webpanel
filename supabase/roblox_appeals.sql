@@ -13,7 +13,12 @@ CREATE TABLE public.roblox_appeals (
     moderator_username TEXT,
     moderator_action_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    discord_message_id TEXT,
+    discord_guild_id TEXT,
+    discord_channel_id TEXT,
+    discord_user_id TEXT,
+    is_active BOOLEAN DEFAULT TRUE
 );
 
 -- Indexes for faster lookups
@@ -33,3 +38,8 @@ COMMENT ON COLUMN public.roblox_appeals.moderator_username IS 'The Discord usern
 COMMENT ON COLUMN public.roblox_appeals.moderator_action_at IS 'Timestamp when a moderator took action.';
 COMMENT ON COLUMN public.roblox_appeals.created_at IS 'Timestamp when the appeal was submitted.';
 COMMENT ON COLUMN public.roblox_appeals.updated_at IS 'Timestamp when the appeal was last updated.';
+COMMENT ON COLUMN public.roblox_appeals.discord_message_id IS 'The Discord message ID of the unban request embed.';
+COMMENT ON COLUMN public.roblox_appeals.discord_guild_id IS 'The Discord guild ID where the unban request embed was sent.';
+COMMENT ON COLUMN public.roblox_appeals.discord_channel_id IS 'The Discord channel ID where the unban request embed was sent.';
+COMMENT ON COLUMN public.roblox_appeals.discord_user_id IS 'The Discord user ID associated with the Roblox ID, if available.';
+COMMENT ON COLUMN public.roblox_appeals.is_active IS 'Indicates if the user is currently active (e.g., not unbanned) in Discord. Set to FALSE on unban.';

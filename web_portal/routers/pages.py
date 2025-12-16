@@ -705,7 +705,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
           </details>
         </div>
       </div>
-    "
+    """
     return respond(content, "Appeal your Roblox Ban", 200)
 
 @router.post("/roblox/submit")

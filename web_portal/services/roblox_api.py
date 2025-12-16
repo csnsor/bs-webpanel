@@ -67,9 +67,6 @@ async def get_user_info(access_token: str) -> dict:
     return resp.json()
 
 
-# Note: The following two functions are adapted from the user-provided aiohttp snippets.
-# They now use httpx to align with the project's existing http client.
-
 async def get_live_ban_status(roblox_id: str) -> Optional[Dict[str, Any]]:
     """Fetches the live game join restriction status for a Roblox user."""
     logger.info(f"Checking live ban status for Roblox ID: {roblox_id}")
@@ -81,25 +78,27 @@ async def get_live_ban_status(roblox_id: str) -> Optional[Dict[str, Any]]:
     headers = {"x-api-key": ROBLOX_BAN_API_KEY}
 
     try:
-        async with get_http_client() as client:
-            response = await client.get(url, headers=headers, timeout=10)
-            logger.debug(f"Roblox ban status check for {roblox_id} | Status: {response.status_code} | URL: {url}")
+        client = get_http_client()
+        response = await client.get(url, headers=headers, timeout=10)
+        logger.debug(f"Roblox ban status check for {roblox_id} | Status: {response.status_code} | URL: {url}")
 
-            if response.status_code == 404:
-                logger.info(f"No user restriction record found for Roblox ID {roblox_id} (404). Not banned.")
-                return None
-
-            response.raise_for_status()
-            data = response.json()
-            logger.debug(f"Roblox ban status response for {roblox_id}: {data}")
-
-            game_join_restriction = data.get("gameJoinRestriction")
-            if game_join_restriction and game_join_restriction.get("active"):
-                logger.info(f"Active ban found for Roblox ID {roblox_id}.")
-                return game_join_restriction
-
-            logger.info(f"No active ban found for Roblox ID {roblox_id} in API response.")
+        if response.status_code == 404:
+            logger.info(f"No user restriction record found for Roblox ID {roblox_id} (404). Not banned.")
             return None
+
+        response.raise_for_status()
+        data = response.json()
+        logger.debug(f"Roblox ban status response for {roblox_id}: {data}")
+
+        game_join_restriction = data.get("gameJoinRestriction")
+        if game_join_restriction and game_join_restriction.get("active"):
+            logger.info(f"Active ban found for Roblox ID {roblox_id}.")
+            return game_join_restriction
+
+        logger.info(f"No active ban found for Roblox ID {roblox_id} in API response.")
+        # Log the full response data for debugging purposes if no active ban is found
+        logger.debug(f"Full Roblox API response when no active ban found for {roblox_id}: {data}")
+        return None
 
     except httpx.HTTPStatusError as http_e:
         error_text = http_e.response.text
@@ -127,14 +126,14 @@ async def get_ban_history(roblox_id: str) -> List[Dict[str, Any]]:
     headers = {"x-api-key": ROBLOX_BAN_API_KEY, "Content-Type": "application/json"}
 
     try:
-        async with get_http_client() as client:
-            response = await client.get(url, headers=headers, timeout=10)
-            if response.status_code == 404:
-                logger.info(f"No ban history found for Roblox ID {roblox_id} (404 Not Found).")
-                return []
-            response.raise_for_status()
-            data = response.json()
-            return data.get("logs", []) or []
+        client = get_http_client()
+        response = await client.get(url, headers=headers, timeout=10)
+        if response.status_code == 404:
+            logger.info(f"No ban history found for Roblox ID {roblox_id} (404 Not Found).")
+            return []
+        response.raise_for_status()
+        data = response.json()
+        return data.get("logs", []) or []
     except httpx.HTTPStatusError as http_e:
         logger.error(f"RobloxAPI (get_ban_history) HTTP Error for {roblox_id}: {http_e.response.status_code} - {http_e.response.text}")
         raise

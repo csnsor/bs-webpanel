@@ -308,46 +308,73 @@ async def post_appeal_embed(
     resp.raise_for_status()
 
 
-async def post_roblox_unban_request_embed(
+async def post_roblox_initial_appeal_embed(
     appeal_id: int,
     roblox_username: str,
     roblox_id: str,
     short_ban_reason: str,
     appeal_reason: str,
+    discord_user_id: Optional[str],
 ) -> Optional[dict]:
-    """Posts an embed to the Roblox unban request channel with Approve/Decline buttons."""
+    """Posts the initial Roblox appeal embed for the first stage of moderation."""
     embed = {
-        "title": f"Roblox Unban Request #{appeal_id}",
-        "color": 0xFF0000,  # Red for Roblox
+        "title": f"Roblox Appeal Review (Step 1) #{appeal_id}",
+        "color": 0x3498DB,  # Blue for informational
         "description": (
             f"**User:** {roblox_username} (Roblox ID: {roblox_id})\n"
+            f"**Discord User:** {f'<@{discord_user_id}>' if discord_user_id else 'N/A'}\n"
             f"**Ban reason:** {short_ban_reason}\n"
             f"**Appeal:** {appeal_reason}"
         ),
         "footer": {"text": f"Appeal ID: {appeal_id}"},
         "url": f"https://www.roblox.com/users/{roblox_id}/profile",
     }
+    components = [{
+        "type": 1,
+        "components": [
+            {"type": 2, "style": 3, "label": "Accept (Forward to Final Review)", "custom_id": f"roblox_initial_accept:{appeal_id}"},
+            {"type": 2, "style": 4, "label": "Decline", "custom_id": f"roblox_initial_decline:{appeal_id}"},
+        ]
+    }]
+    client = get_http_client()
+    try:
+        resp = await client.post(
+            f"{DISCORD_API_BASE}/channels/{ROBLOX_APPEAL_CHANNEL_ID}/messages",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            json={"embeds": [embed], "components": components},
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logging.error(f"Failed to post initial Roblox appeal embed: {e}")
+        return None
 
-    components = [
-        {
-            "type": 1,  # ActionRow
-            "components": [
-                {
-                    "type": 2,  # Button
-                    "style": 3,  # Green
-                    "label": "Approve",
-                    "custom_id": f"roblox_appeal_accept:{appeal_id}",
-                },
-                {
-                    "type": 2,  # Button
-                    "style": 4,  # Red
-                    "label": "Decline",
-                    "custom_id": f"roblox_appeal_decline:{appeal_id}",
-                },
-            ],
-        }
-    ]
-
+async def post_roblox_final_appeal_embed(
+    appeal_id: int,
+    roblox_username: str,
+    roblox_id: str,
+    appeal_reason: str,
+    initial_moderator_username: str,
+) -> Optional[dict]:
+    """Posts the final Roblox appeal embed for elevated moderation."""
+    embed = {
+        "title": f"Roblox Unban Request (Step 2) #{appeal_id}",
+        "color": 0xFF0000,  # Red for Roblox
+        "description": (
+            f"**User:** {roblox_username} (Roblox ID: {roblox_id})\n"
+            f"**Appeal:** {appeal_reason}\n\n"
+            f"Forwarded for final approval by **{initial_moderator_username}**."
+        ),
+        "footer": {"text": f"Appeal ID: {appeal_id}"},
+        "url": f"https://www.roblox.com/users/{roblox_id}/profile",
+    }
+    components = [{
+        "type": 1,
+        "components": [
+            {"type": 2, "style": 3, "label": "Approve Unban", "custom_id": f"roblox_final_accept:{appeal_id}"},
+            {"type": 2, "style": 4, "label": "Decline Unban", "custom_id": f"roblox_final_decline:{appeal_id}"},
+        ]
+    }]
     client = get_http_client()
     try:
         resp = await client.post(
@@ -357,14 +384,8 @@ async def post_roblox_unban_request_embed(
         )
         resp.raise_for_status()
         return resp.json()
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 429:
-            logging.error("Discord is rate limiting unban request embeds.")
-        else:
-            logging.error(f"Failed to post Roblox unban request embed: {exc} - {exc.response.text}")
-        return None
-    except Exception as exc:
-        logging.error(f"Error posting Roblox unban request embed: {exc}")
+    except Exception as e:
+        logging.error(f"Failed to post final Roblox appeal embed: {e}")
         return None
 
 

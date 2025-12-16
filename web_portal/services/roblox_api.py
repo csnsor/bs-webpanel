@@ -111,6 +111,45 @@ async def get_live_ban_status(roblox_id: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+async def unban_user(roblox_id: str) -> bool:
+    """
+    Removes a user restriction (unbans) for a given Roblox user ID.
+    Returns True if the user was successfully unbanned or was not banned.
+    """
+    logger.info(f"Attempting to unban Roblox ID: {roblox_id}")
+    if not ROBLOX_BAN_API_KEY:
+        logger.error("ROBLOX_BAN_API_KEY is not set. Cannot unban user.")
+        return False
+
+    # The URL for deleting a restriction is the same as getting one, but with a DELETE method.
+    url = f"https://apis.roblox.com/cloud/v2/universes/6765805766/user-restrictions/{roblox_id}"
+    headers = {"x-api-key": ROBLOX_BAN_API_KEY}
+
+    try:
+        client = get_http_client()
+        response = await client.delete(url, headers=headers, timeout=15)
+
+        if response.status_code == 204: # Success, no content
+            logger.info(f"Successfully unbanned Roblox ID {roblox_id} (204 No Content).")
+            return True
+        if response.status_code == 404: # Not found, meaning not banned
+            logger.info(f"Attempted to unban Roblox ID {roblox_id}, but no restriction was found (404 Not Found).")
+            return True
+
+        # For any other status, raise an error
+        response.raise_for_status()
+        return False # Should not be reached if raise_for_status() is effective
+    except httpx.HTTPStatusError as http_e:
+        error_text = http_e.response.text
+        logger.error(
+            f"RobloxAPI (unban_user) HTTP Error for {roblox_id}: {http_e.response.status_code} - {error_text}"
+        )
+        return False
+    except Exception as e:
+        logger.exception(f"An unexpected error occurred in unban_user for {roblox_id}:")
+        return False
+
+
 async def get_ban_history(roblox_id: str) -> List[Dict[str, Any]]:
     """Fetches prior ban logs for a Roblox user."""
     logger.info(f"Attempting to get ban history for Roblox ID: {roblox_id}")

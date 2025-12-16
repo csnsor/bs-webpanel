@@ -24,7 +24,7 @@ from ..services.discord_api import (
     fetch_guild_name,
     oauth_authorize_url as discord_oauth_authorize_url,
     post_appeal_embed,
-    post_roblox_unban_request_embed,
+    post_roblox_initial_appeal_embed,
     send_log_message,
     store_user_token,
 )
@@ -1164,11 +1164,9 @@ async def roblox_submit(
 
     _appeal_rate_limit[roblox_user_id] = time.time()
     
-    # The user might be logged into Discord as well.
     user_session = read_user_session(request)
     discord_user_id = user_session.get("uid") if user_session else None
 
-    # Store in Supabase using the new service
     appeal_record = await appeal_db.upsert_roblox_appeal(
         roblox_id=roblox_user_id,
         roblox_username=data["runame"],
@@ -1183,20 +1181,20 @@ async def roblox_submit(
 
     appeal_id = appeal_record["id"]
 
-    # Post to Discord for moderators to handle the unban request
-    message = await post_roblox_unban_request_embed(
+    # Post to Discord for initial moderation
+    message = await post_roblox_initial_appeal_embed(
         appeal_id=appeal_id,
         roblox_username=data["runame"],
         roblox_id=roblox_user_id,
         short_ban_reason=data.get("ban_reason_short", "N/A"),
         appeal_reason=appeal_reason,
+        discord_user_id=discord_user_id
     )
     
     if message and message.get("id"):
-        # Link the Discord message to the appeal record
         await appeal_db.update_roblox_appeal_moderation_status(
             appeal_id=appeal_id,
-            status="pending", # It remains pending until a mod acts
+            status="pending",
             moderator_id="system",
             moderator_username="System",
             discord_message_id=message["id"],
@@ -1213,7 +1211,7 @@ async def roblox_submit(
       <div class="card">
         <h1>Appeal Submitted</h1>
         <p>Reference ID: <strong>{html.escape(str(appeal_id))}</strong></p>
-        <p class="muted">Your Roblox appeal has been submitted for review.</p>
+        <p class="muted">Your Roblox appeal has been submitted for the first step of review.</p>
         <a class="btn" href="/">Back home</a>
       </div>
     """

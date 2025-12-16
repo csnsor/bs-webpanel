@@ -72,46 +72,43 @@ async def get_user_info(access_token: str) -> dict:
 
 async def get_live_ban_status(roblox_id: str) -> Optional[Dict[str, Any]]:
     """Fetches the live game join restriction status for a Roblox user."""
-    logger.info(f"--- Checking live ban status for Roblox ID: {roblox_id} ---")
+    logger.info(f"Checking live ban status for Roblox ID: {roblox_id}")
     if not ROBLOX_BAN_API_KEY:
-        logger.error("ROBLOX_BAN_API_KEY is not set. Cannot check.")
-        return None
-    if not ROBLOX_BAN_API_URL:
-        logger.error("ROBLOX_BAN_API_URL is not set. Cannot check.")
+        logger.error("ROBLOX_BAN_API_KEY is not set. Cannot check live ban status.")
         return None
 
-    url = f"{ROBLOX_BAN_API_URL}/{roblox_id}"
+    url = f"https://apis.roblox.com/cloud/v2/universes/6765805766/user-restrictions/{roblox_id}"
     headers = {"x-api-key": ROBLOX_BAN_API_KEY}
+
     try:
         async with get_http_client() as client:
             response = await client.get(url, headers=headers, timeout=10)
-
-            logger.info(f"Roblox API Request URL: {url}")
-            logger.info(f"Roblox API Response Status: {response.status_code}")
-            logger.info(f"Roblox API Response Headers: {response.headers}")
-            logger.info(f"Roblox API Response Body: {response.text}")
+            logger.debug(f"Roblox ban status check for {roblox_id} | Status: {response.status_code} | URL: {url}")
 
             if response.status_code == 404:
-                logger.info(f"Result: No restriction record found (404).")
+                logger.info(f"No user restriction record found for Roblox ID {roblox_id} (404). Not banned.")
                 return None
-            
+
             response.raise_for_status()
             data = response.json()
-
-            if not data:
-                logger.info("Result: API returned an empty JSON response.")
-                return None
+            logger.debug(f"Roblox ban status response for {roblox_id}: {data}")
 
             game_join_restriction = data.get("gameJoinRestriction")
-
-            if game_join_restriction:
-                logger.info(f"Result: Found 'gameJoinRestriction' object. It is considered a ban.")
+            if game_join_restriction and game_join_restriction.get("active"):
+                logger.info(f"Active ban found for Roblox ID {roblox_id}.")
                 return game_join_restriction
-            
-            logger.warning(f"Result: No 'gameJoinRestriction' key found in response. This may indicate no active ban.")
+
+            logger.info(f"No active ban found for Roblox ID {roblox_id} in API response.")
             return None
+
+    except httpx.HTTPStatusError as http_e:
+        error_text = http_e.response.text
+        logger.error(
+            f"RobloxAPI (get_live_ban_status) HTTP Error for {roblox_id}: {http_e.response.status_code} - {error_text}"
+        )
+        return None
     except Exception as e:
-        logger.exception(f"An exception occurred in get_live_ban_status for {roblox_id}:")
+        logger.exception(f"An unexpected error occurred in get_live_ban_status for {roblox_id}:")
         return None
 
 

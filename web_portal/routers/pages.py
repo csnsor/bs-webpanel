@@ -639,161 +639,321 @@ class PageRenderer:
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
     
-    @staticmethod
-    async def render_discord_appeal_page(
-        request: Request, 
-        user: Dict[str, Any], 
-        ban: Dict[str, Any], 
-        message_cache: List[Dict[str, Any]], 
-        session_token: str,
-        current_lang: str,
-        strings: Dict[str, str]
-    ) -> HTMLResponse:
-        """Render the Discord appeal page."""
-        uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
-        display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
-        
-        now = time.time()
-        first_seen = _ban_first_seen.get(user["id"], now)
-        window_expires_at = first_seen + APPEAL_WINDOW_SECONDS
-        
-        guild_name = await fetch_guild_name(str(TARGET_GUILD_ID))
-        
-        uname = html.escape(uname_label)
-        ban_reason_raw = simplify_ban_reason(ban.get("reason")) or "No reason provided."
-        ban_reason = html.escape(ban_reason_raw)
-        user_id_label = html.escape(str(user["id"]))
-        ban_observed_rel = html.escape(format_relative(now - first_seen))
-        ban_observed_at = html.escape(format_timestamp(int(first_seen)))
-        appeal_deadline = html.escape(format_timestamp(int(window_expires_at)))
-        
-        message_cache_html = ""
-        if message_cache:
-            msgs_to_show = list(reversed(message_cache))
-            rows = []
-            for m in msgs_to_show:
-                ts = html.escape(format_timestamp(m.get("timestamp")))
-                content = html.escape(m.get("content") or "")
-                channel = html.escape(m.get("channel_name") or "#channel")
-                rows.append(
-                    f"""
-                    <div class='chat-row'>
-                        <div class='chat-time'>{ts} <span class='chat-channel'>{channel}</span></div>
-                        <div class='chat-content'>{content}</div>
-                    </div>
-                    """
-                )
-            message_cache_html = f'''<div class="chat-box">{"".join(rows)}</div>'''
-        else:
-            message_cache_html = f'''<div class='muted' style='padding:10px; border:1px dashed var(--border); border-radius:8px;'>{strings['no_messages']}</div>'''
-        
-        context_count = len(message_cache) if message_cache else 0
-        context_open = "open" if context_count else ""
-        
-        window_script = """
-          <script>
-            (function(){
-              const el = document.getElementById('appealWindowRemaining');
-              if(!el) return;
-              const expiresSeconds = parseInt(el.dataset.expires || '0', 10);
-              if(!expiresSeconds) return;
-              const expiresMs = expiresSeconds * 1000;
-              function format(ms){
-                const total = Math.max(0, Math.floor(ms / 1000));
-                const days = Math.floor(total / 86400);
-                const hours = Math.floor((total % 86400) / 3600);
-                return `${days}d ${hours}h`;
-              }
-              function tick(){
-                el.textContent = format(expiresMs - Date.now());
-              }
-              tick();
-              setInterval(tick, 30000);
-            })();
-          </script>
-        """
-        
-        roblox_notice = ""
-        session = read_user_session(request)
-        if not session or not session.get("ruid"):
-            ip = get_client_ip(request)
-            state_token = issue_state_token(ip)
-            state = serializer.dumps({
-                "nonce": secrets.token_urlsafe(8), 
-                "lang": current_lang, 
-                "state_id": state_token,
-                "context": "discord_appeal", # Context for Roblox callback
-                "discord_user_id": user["id"]
-            })
-            roblox_login_url = roblox_api.oauth_authorize_url(state)
-            roblox_notice = f"""
-            <div class="callout callout--warn">
-                <p><strong>Want updates on your appeal?</strong></p>
-                <p>Connect your Roblox account to view combined appeal history and updates via the web portal.</p>
-                <a class="btn btn--roblox" href="{html.escape(roblox_login_url)}">Connect Roblox</a>
-            </div>
+        @staticmethod
+    
+        async def render_discord_appeal_page(
+    
+            request: Request, 
+    
+            user: Dict[str, Any],
+    
+            ban: Dict[str, Any],
+    
+            message_cache: List[Dict[str, Any]],
+    
+            session_token: str,
+    
+            current_lang: str,
+    
+            strings: Dict[str, str],
+    
+            current_session: Optional[Dict[str, Any]] = None # Added parameter
+    
+        ) -> HTMLResponse:
+    
+            """Render the Discord appeal page."""
+    
+            uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
+    
+            display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
+    
+            
+    
+            now = time.time()
+    
+            first_seen = _ban_first_seen.get(user["id"], now)
+    
+            window_expires_at = first_seen + APPEAL_WINDOW_SECONDS
+    
+            
+    
+            guild_name = await fetch_guild_name(str(TARGET_GUILD_ID))
+    
+            
+    
+            uname = html.escape(uname_label)
+    
+            ban_reason_raw = simplify_ban_reason(ban.get("reason")) or "No reason provided."
+    
+            ban_reason = html.escape(ban_reason_raw)
+    
+            user_id_label = html.escape(str(user["id"]))
+    
+            ban_observed_rel = html.escape(format_relative(now - first_seen))
+    
+            ban_observed_at = html.escape(format_timestamp(int(first_seen)))
+    
+            appeal_deadline = html.escape(format_timestamp(int(window_expires_at)))
+    
+            
+    
+            message_cache_html = ""
+    
+            if message_cache:
+    
+                msgs_to_show = list(reversed(message_cache))
+    
+                rows = []
+    
+                for m in msgs_to_show:
+    
+                    ts = html.escape(format_timestamp(m.get("timestamp")))
+    
+                    content = html.escape(m.get("content") or "")
+    
+                    channel = html.escape(m.get("channel_name") or "#channel")
+    
+                    rows.append(
+    
+                        f"""
+    
+                        <div class='chat-row'>
+    
+                            <div class='chat-time'>{ts} <span class='chat-channel'>{channel}</span></div>
+    
+                            <div class='chat-content'>{content}</div>
+    
+                        </div>
+    
+                        """
+    
+                    )
+    
+                message_cache_html = f'''<div class="chat-box">{" ".join(rows)}</div>'''
+    
+            else:
+    
+                message_cache_html = f'''<div class='muted' style='padding:10px; border:1px dashed var(--border); border-radius:8px;'>{strings['no_messages']}</div>'''
+    
+            
+    
+            context_count = len(message_cache) if message_cache else 0
+    
+            context_open = "open" if context_count else ""
+    
+            
+    
+            window_script = """
+    
+              <script>
+    
+                (function(){
+    
+                  const el = document.getElementById('appealWindowRemaining');
+    
+                  if(!el) return;
+    
+                  const expiresSeconds = parseInt(el.dataset.expires || '0', 10);
+    
+                  if(!expiresSeconds) return;
+    
+                  const expiresMs = expiresSeconds * 1000;
+    
+                  function format(ms){
+    
+                    const total = Math.max(0, Math.floor(ms / 1000));
+    
+                    const days = Math.floor(total / 86400);
+    
+                    const hours = Math.floor((total % 86400) / 3600);
+    
+                    return `${days}d ${hours}h`;
+    
+                  }
+    
+                  function tick(){
+    
+                    el.textContent = format(expiresMs - Date.now());
+    
+                  }
+    
+                  tick();
+    
+                  setInterval(tick, 30000);
+    
+                })();
+    
+              </script>
+    
             """
-        
-        content = f"""
-          <div class="grid-2">
-            <div class="form-card">
-              <div class="badge">Window remaining: <span id="appealWindowRemaining" data-expires="{int(window_expires_at)}"></span></div>
-              <h2 style="margin:8px 0;">Appeal your BlockSpin ban</h2>
-              <p class="muted">One appeal per ban. Include context, evidence, and what you will change.</p>
-              {roblox_notice}
-              <form class="form" action="/submit" method="post">
-                <input type="hidden" name="session" value="{html.escape(session_token)}" />
-                <div class="field">
-                  <label for="evidence">Ban evidence (optional)</label>
-                  <input name="evidence" type="text" placeholder="Links or notes you have" />
+    
+            
+    
+            roblox_notice = ""
+    
+            # Use current_session if provided, otherwise read from request
+    
+            session_for_notice = current_session if current_session is not None else read_user_session(request)
+    
+            if not session_for_notice or not session_for_notice.get("ruid"):
+    
+                ip = get_client_ip(request)
+    
+                state_token = issue_state_token(ip)
+    
+                state = serializer.dumps({
+    
+                    "nonce": secrets.token_urlsafe(8), 
+    
+                    "lang": current_lang, 
+    
+                    "state_id": state_token,
+    
+                    "context": "discord_appeal", # Context for Roblox callback
+    
+                    "discord_user_id": user["id"]
+    
+                })
+    
+                roblox_login_url = roblox_api.oauth_authorize_url(state)
+    
+                roblox_notice = f"""
+    
+                <div class="callout callout--warn">
+    
+                    <p><strong>Want updates on your appeal?</strong></p>
+    
+                    <p>Connect your Roblox account to view combined appeal history and updates via the web portal.</p>
+    
+                    <a class="btn btn--roblox" href="{html.escape(roblox_login_url)}">Connect Roblox</a>
+    
                 </div>
-                <div class="field">
-                  <label for="appeal_reason">Why should you be unbanned?</label>
-                  <textarea name="appeal_reason" required placeholder="Be concise. What happened, and what will be different next time?"></textarea>
+    
+                """
+    
+            
+    
+            content = f"""
+    
+              <div class="grid-2">
+    
+                <div class="form-card">
+    
+                  <div class="badge">Window remaining: <span id="appealWindowRemaining" data-expires="{int(window_expires_at)}"></span></div>
+    
+                  <h2 style="margin:8px 0;">Appeal your BlockSpin ban</h2>
+    
+                  <p class="muted">One appeal per ban. Include context, evidence, and what you will change.</p>
+    
+                  {roblox_notice}
+    
+                  <form class="form" action="/submit" method="post">
+    
+                    <input type="hidden" name="session" value="{html.escape(session_token)}" />
+    
+                    <div class="field">
+    
+                      <label for="evidence">Ban evidence (optional)</label>
+    
+                      <input name="evidence" type="text" placeholder="Links or notes you have" />
+    
+                    </div>
+    
+                    <div class="field">
+    
+                      <label for="appeal_reason">Why should you be unbanned?</label>
+    
+                      <textarea name="appeal_reason" required placeholder="Be concise. What happened, and what will be different next time?"></textarea>
+    
+                    </div>
+    
+                    <button class="btn" type="submit">Submit appeal</button>
+    
+                  </form>
+    
                 </div>
-                <button class="btn" type="submit">Submit appeal</button>
-              </form>
-            </div>
-            <div class="card">
-              <details class="details" open>
-                <summary>{strings['ban_details']}</summary>
-                <div class="details-body">
-                  <div class="kv">
-                    <div class="kv-row"><div class="k">User</div><div class="v">{uname}</div></div>
-                    <div class="kv-row"><div class="k">User ID</div><div class="v">{user_id_label}</div></div>
-                    <div class="kv-row"><div class="k">Server</div><div class="v">{html.escape(guild_name or 'BlockSpin')}</div></div>
-                    <div class="kv-row"><div class="k">Ban observed</div><div class="v">{ban_observed_rel} · {ban_observed_at}</div></div>
-                    <div class="kv-row"><div class="k">Appeal deadline</div><div class="v">{appeal_deadline}</div></div>
-                    <div class="kv-row"><div class="k">Reason</div><div class="v">{ban_reason}</div></div>
+    
+                <div class="card">
+    
+                  <details class="details" open>
+    
+                    <summary>{strings['ban_details']}</summary>
+    
+                    <div class="details-body">
+    
+                      <div class="kv">
+    
+                        <div class="kv-row"><div class="k">User</div><div class="v">{uname}</div></div>
+    
+                        <div class="kv-row"><div class="k">User ID</div><div class="v">{user_id_label}</div></div>
+    
+                        <div class="kv-row"><div class="k">Server</div><div class="v">{html.escape(guild_name or 'BlockSpin')}</div></div>
+    
+                        <div class="kv-row"><div class="k">Ban observed</div><div class="v">{ban_observed_rel} · {ban_observed_at}</div></div>
+    
+                        <div class="kv-row"><div class="k">Appeal deadline</div><div class="v">{appeal_deadline}</div></div>
+    
+                        <div class="kv-row"><div class="k">Reason</div><div class="v">{ban_reason}</div></div>
+    
+                      </div>
+    
+                    </div>
+    
+                  </details>
+    
+    
+    
+                  <details class="details" {context_open}>
+    
+                    <summary>{strings['messages_header']} <span style="color:var(--muted2); font-weight:700; letter-spacing:0; text-transform:none;">({context_count})</span></summary>
+    
+                    <div class="details-body">{message_cache_html}</div>
+    
+                  </details>
+    
+    
+    
+                  <details class="details">
+    
+                    <summary>Your history</summary>
+    
+                    <div class="details-body">{render_history_items([], format_timestamp=format_timestamp)}</div>
+    
+                  </details>
+    
+                  <div class="btn-row" style="margin-top:10px;">
+    
+                    <a class="btn secondary" href="/">Back home</a>
+    
                   </div>
+    
                 </div>
-              </details>
-
-              <details class="details" {context_open}>
-                <summary>{strings['messages_header']} <span style="color:var(--muted2); font-weight:700; letter-spacing:0; text-transform:none;">({context_count})</span></summary>
-                <div class="details-body">{message_cache_html}</div>
-              </details>
-
-              <details class="details">
-                <summary>Your history</summary>
-                <div class="details-body">{render_history_items([], format_timestamp=format_timestamp)}</div>
-              </details>
-              <div class="btn-row" style="margin-top:10px;">
-                <a class="btn secondary" href="/">Back home</a>
+    
               </div>
-            </div>
-          </div>
-          {window_script}
-        """
-        
-        resp = HTMLResponse(
-            render_page("Appeal your ban", content, lang=current_lang, strings=strings), 
-            status_code=200, 
-            headers={"Cache-Control": "no-store"}
-        )
-        persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
-        resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
-        return resp
+    
+              {window_script}
+    
+            """
+    
+            
+    
+            resp = HTMLResponse(
+    
+                render_page("Appeal your ban", content, lang=current_lang, strings=strings), 
+    
+                status_code=200, 
+    
+                headers={"Cache-Control": "no-store"}
+    
+            )
+    
+            # Note: The session is persisted in the main callback handler, not here.
+    
+            # persist_user_session(request, resp, user["id"], uname_label, display_name=display_name) # Removed
+    
+            resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+    
+            return resp
     
     @staticmethod
     async def render_roblox_appeal_page(
@@ -1150,7 +1310,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         response = RedirectResponse("/status")
         
         # Ensure both Discord and Roblox sessions are persisted
-        persist_session(
+        updated_session = persist_session( # Capture return value
             request, response,
             discord_user_id=user["id"],
             discord_username=uname_label,
@@ -1169,7 +1329,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     # Create a response object first for cookie setting
     response = HTMLResponse(status_code=200) # Default, will be updated by render_page
     
-    persist_session(
+    updated_session = persist_session( # Capture return value
         request, response,
         discord_user_id=user["id"],
         discord_username=uname_label,
@@ -1193,8 +1353,8 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
             # Situation 4: Discord NOT banned, Roblox NOT banned
             # User logs in with Discord, but not banned. Check if Roblox is linked.
             # If Roblox is linked, go to status page. If not, go to home with options to link.
-            current_session = read_user_session(request)
-            if current_session and current_session.get("ruid"):
+            # Use the updated_session here
+            if updated_session and updated_session.get("ruid"): # Use updated_session
                 response = RedirectResponse("/status")
                 # Session already persisted by persist_session call above
                 return response
@@ -1273,8 +1433,12 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     })
     
     # Render appeal page
+    # Get the session that was just persisted to the response
+    # The session passed to render_discord_appeal_page also needs to be updated with the latest
+    # The `persist_session` call earlier in `callback` already updated the cookie on `response`.
+    # We now need to pass this updated session to the render function.
     return await PageRenderer.render_discord_appeal_page(
-        request, user, ban, message_cache, session_token, current_lang, strings
+        request, user, ban, message_cache, session_token, current_lang, strings, current_session=updated_session
     )
 
 
@@ -1314,7 +1478,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
             pass # Keep existing logic for fetching from session
         
         # Persist the combined session immediately
-        persist_session(
+        updated_session_for_discord_context = persist_session( # Capture return value
             request, response,
             discord_user_id=discord_user_id,
             discord_username=discord_username, # Use existing or default
@@ -1352,12 +1516,13 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
             "display_name": discord_display_name # Include Discord display name
         })
         
+        # Render appeal page
         return await PageRenderer.render_roblox_appeal_page(
-            request, user, ban, session_token, current_lang, strings
+            request, user, ban, session_token, current_lang, strings, current_session=updated_session_for_discord_context
         )
 
     # Original logic for Roblox-first login or no specific context
-    persist_session(
+    updated_session_for_roblox_context = persist_session( # Capture return value
         request, response,
         discord_user_id=discord_user_id,
         discord_username=discord_username,
@@ -1373,7 +1538,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         # Situation 4: Discord NOT banned, Roblox NOT banned
         # User logs in with Roblox, but not banned. Check if Discord is linked.
         # If Discord is linked, go to status page. If not, go to home with options to link.
-        if existing_session and existing_session.get("uid"):
+        if updated_session_for_roblox_context and updated_session_for_roblox_context.get("uid"): # Use updated_session
             response = RedirectResponse("/status")
             return response
         else:
@@ -1396,7 +1561,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
     
     # Render appeal page
     return await PageRenderer.render_roblox_appeal_page(
-        request, user, ban, session_token, current_lang, strings
+        request, user, ban, session_token, current_lang, strings, current_session=updated_session_for_roblox_context
     )
 
 

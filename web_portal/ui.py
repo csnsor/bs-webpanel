@@ -174,20 +174,24 @@ def render_error(
     safe_title = html.escape(title)
     safe_msg = html.escape(message)
     strings = strings or LANG_STRINGS["en"]
+
     content = f"""
       <div class="card" style="text-align:center;">
         <div class="icon-error">!</div>
         <h2>{safe_title}</h2>
-        <p>{safe_msg}</p>
+
         <div class="error-box">{safe_msg}</div>
+
         <div class="btn-row" style="justify-content:center;">
           <a class="btn" href="/" aria-label="Back home">{strings['error_home']}</a>
           <a class="btn secondary" href="javascript:location.reload();" aria-label="Retry action">{strings['error_retry']}</a>
         </div>
       </div>
     """
+
     return HTMLResponse(
         render_page(title, content, lang=lang, strings=strings),
         status_code=status_code,
         headers={"Cache-Control": "no-store"},
     )
+

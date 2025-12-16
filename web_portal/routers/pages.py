@@ -300,8 +300,8 @@ class PageRenderer:
         # Action buttons in the hero section
         hero_actions = []
         if has_discord and has_roblox:
-            # Both linked, no appeal needed here.
-            pass
+            # Both linked, no primary appeal action needed here.
+            hero_actions.append('<a class="btn btn--primary" href="/status">Check Appeal Status</a>')
         elif has_discord:
             hero_actions.append(f"""
                 <a class="btn btn--primary" href="{html.escape(discord_login_url)}" aria-label="Appeal with Discord">
@@ -315,7 +315,7 @@ class PageRenderer:
                 </a>
             """)
         else:
-            # Neither linked, show both options
+            # Neither linked, show both options for initial appeal
             hero_actions.append(f"""
                 <a class="btn btn--primary" href="{html.escape(discord_login_url)}" aria-label="Appeal with Discord">
                     Appeal with Discord
@@ -327,35 +327,24 @@ class PageRenderer:
                 </a>
             """)
         
-        if not hero_actions:
-            pass
-
         # Action buttons in the side panel
         panel_actions = []
-        if not has_discord and has_roblox:
+        if has_discord and has_roblox:
+            panel_actions.append('<p class="muted">You are signed into both platforms.</p><a class="btn btn--soft btn--wide" href="/status">Check Appeal Status</a>')
+        elif not has_discord and has_roblox:
              # Roblox is linked, but Discord is not. Prompt to connect Discord.
             panel_actions.append(
-                f'<p class="muted">To see your full appeal history, connect your Discord account.</p>'
+                f'<p class="muted">Connect your Discord account for full history & updates.</p>'
                 f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Connect Discord</a>'
             )
         elif has_discord and not has_roblox:
             # Discord is linked, but Roblox is not. Prompt to connect Roblox.
             panel_actions.append(
-                f'<p class="muted">To see your full appeal history, connect your Roblox account.</p>'
+                f'<p class="muted">Connect your Roblox account for full history & updates.</p>'
                 f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Connect Roblox</a>'
             )
-        elif not has_discord:
-            panel_actions.append(
-                f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Continue with Discord</a>'
-            )
-        if not has_roblox: # This 'if' should be separate if we want both options when neither are linked
-            if not has_discord: # Only show Roblox option if Discord is also not linked initially
-                panel_actions.append(
-                    f'<a class="btn btn--soft btn--wide" href="{html.escape(roblox_login_url)}">Continue with Roblox</a>'
-                )
-
-        if not panel_actions:
-            panel_actions.append('<p class="muted">You are signed into both platforms.</p><a class="btn btn--soft btn--wide" href="/status">Check Appeal Status</a>')
+        # If neither is linked, no panel actions related to login/linking needed here, as hero_actions provides them.
+        # The default "How it works" section will follow.
 
         return f"""
         <section class="hero">

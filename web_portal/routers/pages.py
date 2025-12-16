@@ -906,52 +906,42 @@ async def get_status_data(request: Request):
     discord_user_id = session.get("uid")
     roblox_user_id = session.get("ruid")
 
-    history = []
-    
-    # Fetch Discord appeals
+    all_appeals = []
+
+    # Fetch Discord-specific appeals
     if discord_user_id:
-        discord_history = await fetch_appeal_history(discord_user_id, limit=25)
-        for item in discord_history:
+        discord_appeals = await fetch_appeal_history(discord_user_id, limit=25)
+        for item in discord_appeals:
             item['platform'] = 'Discord'
-            history.append(item)
+            all_appeals.append(item)
 
-    # Fetch Roblox appeals
-    if roblox_user_id:
-        roblox_history = await appeal_db.get_roblox_appeal_history(roblox_id=roblox_user_id, limit=25)
-        for item in roblox_history:
+    # Fetch Roblox appeals (can be linked to discord_user_id OR roblox_user_id)
+    if roblox_user_id or discord_user_id:
+        roblox_appeals = await appeal_db.get_roblox_appeal_history(
+            roblox_id=roblox_user_id, 
+            discord_user_id=discord_user_id, 
+            limit=50
+        )
+        for item in roblox_appeals:
             item['platform'] = 'Roblox'
-            item['ban_reason'] = item.get('short_ban_reason') # Normalize key for rendering
-            history.append(item)
+            item['ban_reason'] = item.get('short_ban_reason')
+            item['appeal_id'] = item.get('id')
+            all_appeals.append(item)
     
-    # If a user is logged into both, we might have fetched roblox appeals twice if they are linked
-    # Let's combine and create a unique list.
-    if discord_user_id and roblox_user_id:
-        combined_history = await appeal_db.get_roblox_appeal_history(roblox_id=roblox_user_id, discord_user_id=discord_user_id, limit=50)
-        
-        # Add platform and normalize keys
-        processed_ids = set()
-        unique_history = []
-        for item in discord_history:
-            if item.get("appeal_id") not in processed_ids:
-                item['platform'] = 'Discord'
-                unique_history.append(item)
-                processed_ids.add(item.get("appeal_id"))
+    # Use a dictionary to create a unique list of appeals.
+    # The key is a tuple of (platform, id) to ensure uniqueness across different appeal types.
+    unique_appeals = {}
+    for item in all_appeals:
+        platform = item.get("platform")
+        # For Roblox, the unique ID is 'id'. For Discord, it's 'appeal_id'.
+        item_id = item.get("id") if platform == "Roblox" else item.get("appeal_id")
+        if platform and item_id:
+            unique_appeals[(platform, item_id)] = item
+    
+    # Sort the unique appeals by creation date
+    sorted_appeals = sorted(list(unique_appeals.values()), key=lambda x: x.get("created_at", "0"), reverse=True)
 
-        for item in combined_history:
-             if item.get("id") not in processed_ids:
-                item['platform'] = 'Roblox'
-                item['ban_reason'] = item.get('short_ban_reason')
-                item['appeal_id'] = item.get('id')
-                unique_history.append(item)
-                processed_ids.add(item.get("id"))
-        
-        history = unique_history
-
-
-    # Sort combined history by creation date
-    history.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-
-    return {"history": history[:50]} # Limit to 50 most recent items
+    return {"history": sorted_appeals[:50]}
 
 
 @router.get("/logout")

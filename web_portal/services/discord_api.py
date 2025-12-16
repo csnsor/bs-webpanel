@@ -354,7 +354,7 @@ async def post_roblox_final_appeal_embed(
     roblox_username: str,
     roblox_id: str,
     appeal_reason: str,
-    initial_moderator_username: str,
+    initial_moderator_id: str,
 ) -> Optional[dict]:
     """Posts the final Roblox appeal embed for elevated moderation."""
     embed = {
@@ -363,7 +363,7 @@ async def post_roblox_final_appeal_embed(
         "description": (
             f"**User:** {roblox_username} (Roblox ID: {roblox_id})\n"
             f"**Appeal:** {appeal_reason}\n\n"
-            f"Forwarded for final approval by **{initial_moderator_username}**."
+            f"Forwarded for final approval by <@{initial_moderator_id}>."
         ),
         "footer": {"text": f"Appeal ID: {appeal_id}"},
         "url": f"https://www.roblox.com/users/{roblox_id}/profile",

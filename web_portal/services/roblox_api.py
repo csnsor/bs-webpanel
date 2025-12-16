@@ -113,32 +113,32 @@ async def get_live_ban_status(roblox_id: str) -> Optional[Dict[str, Any]]:
 
 async def unban_user(roblox_id: str) -> bool:
     """
-    Removes a user restriction (unbans) for a given Roblox user ID.
+    Deactivates a user's game join restriction (unbans) using a PATCH request.
     Returns True if the user was successfully unbanned or was not banned.
     """
-    logger.info(f"Attempting to unban Roblox ID: {roblox_id}")
+    logger.info(f"Attempting to unban Roblox ID: {roblox_id} via PATCH")
     if not ROBLOX_BAN_API_KEY:
         logger.error("ROBLOX_BAN_API_KEY is not set. Cannot unban user.")
         return False
 
-    # The URL for deleting a restriction is the same as getting one, but with a DELETE method.
     url = f"https://apis.roblox.com/cloud/v2/universes/6765805766/user-restrictions/{roblox_id}"
-    headers = {"x-api-key": ROBLOX_BAN_API_KEY}
+    params = {"updateMask": "gameJoinRestriction"}
+    headers = {"x-api-key": ROBLOX_BAN_API_KEY, "Content-Type": "application/json"}
+    payload = {"gameJoinRestriction": {"active": False}}
 
     try:
         client = get_http_client()
-        response = await client.delete(url, headers=headers, timeout=15)
+        response = await client.patch(url, params=params, json=payload, headers=headers, timeout=15)
 
-        if response.status_code == 204: # Success, no content
-            logger.info(f"Successfully unbanned Roblox ID {roblox_id} (204 No Content).")
+        if response.status_code == 200:
+            logger.info(f"Successfully unbanned Roblox ID {roblox_id} (200 OK).")
             return True
-        if response.status_code == 404: # Not found, meaning not banned
+        if response.status_code == 404:
             logger.info(f"Attempted to unban Roblox ID {roblox_id}, but no restriction was found (404 Not Found).")
             return True
 
-        # For any other status, raise an error
         response.raise_for_status()
-        return False # Should not be reached if raise_for_status() is effective
+        return False
     except httpx.HTTPStatusError as http_e:
         error_text = http_e.response.text
         logger.error(

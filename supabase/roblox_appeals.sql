@@ -7,6 +7,7 @@ CREATE TABLE public.roblox_appeals (
     roblox_username TEXT NOT NULL,
     appeal_text TEXT NOT NULL,
     ban_data JSONB, -- To store ban history or live status
+    short_ban_reason TEXT,
     status TEXT DEFAULT 'pending', -- e.g., pending, approved, rejected
     moderator_id TEXT,
     moderator_username TEXT,
@@ -25,6 +26,7 @@ COMMENT ON COLUMN public.roblox_appeals.roblox_id IS 'The Roblox user ID of the 
 COMMENT ON COLUMN public.roblox_appeals.roblox_username IS 'The Roblox username of the appellant at the time of appeal.';
 COMMENT ON COLUMN public.roblox_appeals.appeal_text IS 'The user-submitted text for their appeal.';
 COMMENT ON COLUMN public.roblox_appeals.ban_data IS 'JSONB blob containing ban history and live ban status from the Roblox API.';
+COMMENT ON COLUMN public.roblox_appeals.short_ban_reason IS 'The shortened, categorized ban reason.';
 COMMENT ON COLUMN public.roblox_appeals.status IS 'The current status of the appeal (e.g., pending, approved, rejected).';
 COMMENT ON COLUMN public.roblox_appeals.moderator_id IS 'The Discord user ID of the moderator who handled the appeal.';
 COMMENT ON COLUMN public.roblox_appeals.moderator_username IS 'The Discord username of the moderator.';

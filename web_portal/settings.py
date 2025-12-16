@@ -31,7 +31,7 @@ ROBLOX_CLIENT_ID = os.getenv("ROBLOX_CLIENT_ID")
 ROBLOX_CLIENT_SECRET = os.getenv("ROBLOX_CLIENT_SECRET")
 ROBLOX_REDIRECT_URI = os.getenv("ROBLOX_REDIRECT_URI", "https://bs-appeals.up.railway.app/oauth/roblox/callback")
 ROBLOX_BAN_API_KEY = os.getenv("ROBLOX_BAN_API_KEY")
-ROBLOX_BAN_API_URL = os.getenv("ROBLOX_BAN_API_URL")  # The base URL for the ban/restriction API
+ROBLOX_BAN_API_URL = os.getenv("ROBLOX_BAN_API_URL", "https://apis.roblox.com/cloud/v2/universes/6765805766/user-restrictions")  # The base URL for the ban/restriction API
 ROBLOX_SUPABASE_TABLE = "roblox-appeals"
 
 

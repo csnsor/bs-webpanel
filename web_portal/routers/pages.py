@@ -616,6 +616,20 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     return respond(content, "Appeal your ban", 200)
 
 
+from ..utils import (
+    clean_display_name,
+    format_relative,
+    format_timestamp,
+    get_client_ip,
+    hash_ip,
+    hash_value,
+    normalize_language,
+    shorten_public_ban_reason,
+    simplify_ban_reason,
+)
+
+# ... (rest of the file is unchanged until roblox_callback)
+
 @router.get("/oauth/roblox/callback")
 async def roblox_callback(request: Request, code: str, state: str, lang: Optional[str] = None):
     try:
@@ -638,7 +652,6 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         raise HTTPException(status_code=400, detail="Invalid or replayed state")
     asyncio.create_task(send_log_message(f"[auth_roblox] user={user_id} ip_hash={hash_ip(ip)} lang={current_lang}"))
 
-    # Placeholder for fetching Roblox appeal history
     history_html = "<div class='muted'>Appeal history for Roblox is not yet implemented.</div>"
 
     strings = dict(strings)
@@ -661,19 +674,20 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         return respond(content, "No active ban", 200)
 
     ban_history = await roblox_api.get_ban_history(user_id)
+    short_reason = shorten_public_ban_reason(ban.get("displayReason") or "")
 
     session_token = serializer.dumps(
         {
             "ruid": user_id,
             "runame": uname_label,
             "ban_data": ban,
+            "ban_reason_short": short_reason,
             "ban_history": ban_history,
             "iat": time.time(),
             "lang": current_lang,
         }
     )
-    ban_reason_raw = ban.get("displayReason") or "No reason provided."
-    ban_reason = html.escape(ban_reason_raw)
+    ban_reason = html.escape(short_reason)
     user_id_label = html.escape(str(user_id))
 
     content = f"""
@@ -706,7 +720,6 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
     """
     return respond(content, "Appeal your Roblox Ban", 200)
 
-
 @router.post("/roblox/submit")
 async def roblox_submit(
     request: Request,
@@ -734,7 +747,6 @@ async def roblox_submit(
     enforce_ip_rate_limit(ip)
     asyncio.create_task(send_log_message(f"[roblox_appeal_attempt] user={user_id} ip_hash={hash_ip(ip)}"))
 
-    # Simplified rate limiting for Roblox appeals
     last = _appeal_rate_limit.get(user_id)
     if last and now - last < APPEAL_COOLDOWN_SECONDS:
         wait = int(APPEAL_COOLDOWN_SECONDS - (now - last))
@@ -753,13 +765,14 @@ async def roblox_submit(
                 "roblox_username": data["runame"],
                 "appeal_text": appeal_reason,
                 "ban_data": data.get("ban_data"),
+                "short_ban_reason": data.get("ban_reason_short"),
                 "ip_hash": hash_ip(ip),
             },
         )
-
+    
     _used_sessions[token_hash] = now
     _appeal_locked[user_id] = True
-
+    
     current_lang = data.get("lang", "en")
     strings = await get_strings(current_lang)
     success = f"""
@@ -771,6 +784,8 @@ async def roblox_submit(
       </div>
     """
     return HTMLResponse(render_page("Appeal Submitted", success, lang=current_lang, strings=strings), status_code=200, headers={"Cache-Control": "no-store"})
+
+# ... (rest of the file is unchanged)
 
 
 @router.post("/submit")

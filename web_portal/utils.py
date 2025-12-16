@@ -95,3 +95,14 @@ def wants_html(request: Request) -> bool:
     accept = request.headers.get("accept", "")
     return "text/html" in accept or "*/*" in accept
 
+
+def shorten_public_ban_reason(reason: str) -> str:
+    rl = (reason or "").lower()
+    if "you created or used an account" in rl:
+        return "Alt Account"
+    if any(k in rl for k in ("cheating", "further", "exploiting", "automatic")):
+        return "Exploiting"
+    if any(k in rl for k in ("bm", "bye", "scam", "economy", "black", "cross-trading", "cross")):
+        return "Economy"
+    return "Other"
+

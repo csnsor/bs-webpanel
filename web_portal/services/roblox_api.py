@@ -80,7 +80,7 @@ async def get_live_ban_status(roblox_id: str) -> Optional[Dict[str, Any]]:
         logger.error("ROBLOX_BAN_API_URL is not set. Cannot check live ban status.")
         return None
 
-    url = f"{ROBLOX_BAN_API_URL}/{roblox_id}?updateMask=gameJoinRestriction"
+    url = f"{ROBLOX_BAN_API_URL}/{roblox_id}"
     headers = {"x-api-key": ROBLOX_BAN_API_KEY, "Content-Type": "application/json"}
     try:
         async with get_http_client() as client:

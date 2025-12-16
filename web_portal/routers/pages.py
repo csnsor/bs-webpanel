@@ -771,7 +771,13 @@ class PageRenderer:
         if not session or not session.get("uid"):
             ip = get_client_ip(request)
             state_token = issue_state_token(ip)
-            state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
+            state = serializer.dumps({
+                "nonce": secrets.token_urlsafe(8), 
+                "lang": current_lang, 
+                "state_id": state_token,
+                "context": "roblox_appeal",
+                "roblox_user_id": user_id
+            })
             discord_login_url = discord_oauth_authorize_url(state)
             discord_notice = f"""
             <div class="callout callout--warn">
@@ -1033,21 +1039,57 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     auth_data = await AuthService.handle_discord_callback(request, code, state, lang)
     user = auth_data["user"]
     current_lang = auth_data["lang"]
-    
+    state_data = auth_data["state_data"] # Extract state_data
+
     strings = await get_strings(current_lang)
     strings = dict(strings)
-    
+
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
     display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
-    
-    # Check if a Roblox session already exists
+
+    # Check if a Roblox session already exists AND if this Discord auth came from a Roblox appeal context
     roblox_session = read_user_session(request)
     logging.info(f"Discord callback: Current session in request: {roblox_session}")
-    if roblox_session and "ruid" in roblox_session:
-        # The user is already in a Roblox appeal flow, just link the Discord account
-        response = RedirectResponse("/status")
-        persist_user_session(request, response, user["id"], uname_label, display_name=display_name)
-        return response
+    if roblox_session and "ruid" in roblox_session and state_data.get("context") == "roblox_appeal":
+        roblox_user_id = roblox_session["ruid"]
+        roblox_uname_label = roblox_session.get("runame") or ""
+        roblox_display_name = roblox_session.get("rdisplay_name") or ""
+
+        # Fetch Roblox ban status again
+        ban = await roblox_api.get_live_ban_status(roblox_user_id)
+        if not ban:
+            # If no ban found, redirect to home or status with both accounts linked
+            response = RedirectResponse("/status")
+            persist_user_session(request, response, user["id"], uname_label, display_name=display_name)
+            return response
+        
+        # Fetch ban history
+        ban_history = await roblox_api.get_ban_history(roblox_user_id)
+        short_reason = shorten_public_ban_reason(ban.get("displayReason") or "")
+
+        # Create a new session token, now including the Discord UID
+        session_token = serializer.dumps({
+            "ruid": roblox_user_id,
+            "runame": roblox_uname_label,
+            "ban_data": ban,
+            "ban_reason_short": short_reason,
+            "ban_history": ban_history,
+            "iat": time.time(),
+            "lang": current_lang,
+            "uid": user["id"], # Include Discord UID
+            "uname": uname_label, # Include Discord username
+            "display_name": display_name # Include Discord display name
+        })
+
+        # Render the Roblox appeal page, with the Discord account now linked
+        resp = await PageRenderer.render_roblox_appeal_page(
+            request, {"sub": roblox_user_id, "name": roblox_uname_label, "nickname": roblox_display_name}, ban, session_token, current_lang, strings
+        )
+        # Ensure both Discord and Roblox sessions are persisted
+        persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
+        persist_roblox_user_session(request, resp, roblox_user_id, roblox_uname_label, display_name=roblox_display_name)
+        return resp
+
 
     # Check if user is eligible to appeal
     ban = await fetch_ban_if_exists(user["id"])

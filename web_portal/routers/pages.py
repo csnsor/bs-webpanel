@@ -409,7 +409,7 @@ class PageRenderer:
             signalChip: document.getElementById("signalChip"),
           };
 
-          function esc(s){ return String(s ?? "").replace(/[&<>"'\/]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;','/':'&#x2F;'}[m])); }
+          function esc(s){ return String(s ?? "").replace(/[&<>"'\\/]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;','/':'&#x2F;'}[m])); }
           function statusClass(status){
             const t = String(status || "pending").toLowerCase();
             if (t.startsWith("accept")) return "ok";

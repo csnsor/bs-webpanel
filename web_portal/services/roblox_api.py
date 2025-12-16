@@ -95,7 +95,7 @@ async def store_roblox_token(user_id: str, token_data: dict):
         "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
-    await supabase_request(ROBLOX_OAUTH_TOKENS_TABLE, "post", payload=payload, prefer="resolution=merge-duplicates")
+    await supabase_request("post", ROBLOX_OAUTH_TOKENS_TABLE, payload=payload, prefer="resolution=merge-duplicates")
 
     
 async def get_valid_access_token(user_id: str) -> Optional[str]:

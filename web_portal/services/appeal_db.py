@@ -58,11 +58,11 @@ async def upsert_roblox_appeal(
     # If we found an existing appeal, use its ID to update it.
     if appeal_id:
         payload["id"] = appeal_id
-        prefer_header = "resolution=merge-duplicates"
+        prefer_header = "resolution=merge-duplicates,return=representation"
     else:
         # This is a new appeal, set created_at
         payload["created_at"] = datetime.now(timezone.utc).isoformat()
-        prefer_header = "resolution=merge-duplicates"
+        prefer_header = "resolution=merge-duplicates,return=representation"
 
 
     try:
@@ -74,6 +74,9 @@ async def upsert_roblox_appeal(
         )
         if recs and isinstance(recs, list) and len(recs) > 0:
             return recs[0]
+        # This part might still be problematic if Supabase returns 201 with an empty body
+        # even with the header. Logging the actual response could be useful.
+        logging.warning(f"Upsert for Roblox ID {roblox_id} returned no records.")
         return None
     except Exception as exc:
         logging.error(f"Error upserting Roblox appeal: {exc}")

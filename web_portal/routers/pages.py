@@ -1144,27 +1144,16 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         if not ban:
             # If no ban found, redirect to home or status with both accounts linked
             response = RedirectResponse("/status")
-            persist_user_session(request, response, user["id"], uname_label, display_name=display_name)
+            updated_session = persist_session( # Capture return value
+                request, response,
+                discord_user_id=user["id"],
+                discord_username=uname_label,
+                discord_display_name=display_name,
+                roblox_user_id=roblox_user_id,
+                roblox_username=roblox_uname_label,
+                roblox_display_name=roblox_display_name
+            )
             return response
-        
-        # Fetch ban history
-        ban_history = await roblox_api.get_ban_history(roblox_user_id)
-        short_reason = shorten_public_ban_reason(ban.get("displayReason") or "")
-
-        # Create a response object first for cookie setting
-        response = RedirectResponse("/status")
-        
-        # Ensure both Discord and Roblox sessions are persisted
-        updated_session = persist_session( # Capture return value
-            request, response,
-            discord_user_id=user["id"],
-            discord_username=uname_label,
-            discord_display_name=display_name,
-            roblox_user_id=roblox_user_id,
-            roblox_username=roblox_uname_label,
-            roblox_display_name=roblox_display_name
-        )
-        return response
 
 
     # Check if user is eligible to appeal

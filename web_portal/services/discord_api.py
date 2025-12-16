@@ -22,6 +22,7 @@ from ..settings import (
     GUILD_NAME_CACHE_TTL_SECONDS,
     OAUTH_SCOPES,
     REMOVE_FROM_DM_GUILD_AFTER_DM,
+    ROBLOX_APPEAL_CHANNEL_ID,
     TARGET_GUILD_ID,
     TARGET_GUILD_NAME,
 )
@@ -58,7 +59,6 @@ async def exchange_code_for_token(code: str) -> dict:
     except httpx.HTTPStatusError as exc:
         logging.warning("OAuth code exchange failed: %s | body=%s", exc, exc.response.text)
         raise HTTPException(status_code=400, detail="Authentication failed. Please try logging in again.") from exc
-
 
 def store_user_token(user_id: str, token_data: dict) -> None:
     expires_in = float(token_data.get("expires_in") or 0)
@@ -307,6 +307,36 @@ async def post_appeal_embed(
     resp.raise_for_status()
 
 
+async def post_roblox_appeal_embed(
+    appeal_id: str,
+    roblox_username: str,
+    roblox_id: str,
+    short_ban_reason: str,
+    appeal_reason: str,
+) -> None:
+    """Posts a simplified embed for a Roblox appeal to the designated channel."""
+    embed = {
+        "title": f"Roblox Appeal #{appeal_id}",
+        "color": 0xFF0000,  # Red for Roblox
+        "description": (
+            f"**User:** {roblox_username}\n"
+            f"**Ban reason:** {short_ban_reason}\n"
+            f"**Appeal:** {appeal_reason}"
+        ),
+        "footer": {"text": f"Roblox User ID: {roblox_id}"},
+        "url": f"https://www.roblox.com/users/{roblox_id}/profile",
+    }
+    client = get_http_client()
+    resp = await client.post(
+        f"{DISCORD_API_BASE}/channels/{ROBLOX_APPEAL_CHANNEL_ID}/messages",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        json={"embeds": [embed]},
+    )
+    if resp.status_code == 429:
+        raise HTTPException(status_code=429, detail="Discord is rate limiting. Please retry in a minute.")
+    resp.raise_for_status()
+
+
 async def dm_user(user_id: str, embed: dict) -> bool:
     await ensure_dm_guild_membership(user_id)
     client = get_http_client()
@@ -329,4 +359,3 @@ async def dm_user(user_id: str, embed: dict) -> bool:
     if delivered:
         await maybe_remove_from_dm_guild(user_id)
     return delivered
-

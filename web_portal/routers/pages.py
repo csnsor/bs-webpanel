@@ -22,6 +22,7 @@ from ..services.discord_api import (
     fetch_guild_name,
     oauth_authorize_url as discord_oauth_authorize_url,
     post_appeal_embed,
+    post_roblox_appeal_embed,
     send_log_message,
     store_user_token,
 )
@@ -64,6 +65,7 @@ from ..utils import (
     hash_ip,
     hash_value,
     normalize_language,
+    shorten_public_ban_reason,
     simplify_ban_reason,
 )
 
@@ -213,7 +215,7 @@ async def home(request: Request, lang: Optional[str] = None):
         signalChip: document.getElementById("signalChip"),
       };
 
-      function esc(s){ return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+      function esc(s){ return String(s ?? "").replace(/[&<>'"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',''':'&#39;'}[m])); }
       function statusClass(status){
         const t = String(status || "pending").toLowerCase();
         if (t.startsWith("accept")) return "ok";
@@ -535,7 +537,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
                 </div>
                 """
             )
-        message_cache_html = f"<div class='chat-box'>{''.join(rows)}</div>"
+        message_cache_html = f"<div class='chat-box">{''.join(rows)}</div>"
     else:
         message_cache_html = f"<div class='muted' style='padding:10px; border:1px dashed var(--border); border-radius:8px;'>{strings['no_messages']}</div>"
 
@@ -612,23 +614,9 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         </div>
       </div>
       {window_script}
-    """
+    "
     return respond(content, "Appeal your ban", 200)
 
-
-from ..utils import (
-    clean_display_name,
-    format_relative,
-    format_timestamp,
-    get_client_ip,
-    hash_ip,
-    hash_value,
-    normalize_language,
-    shorten_public_ban_reason,
-    simplify_ban_reason,
-)
-
-# ... (rest of the file is unchanged until roblox_callback)
 
 @router.get("/oauth/roblox/callback")
 async def roblox_callback(request: Request, code: str, state: str, lang: Optional[str] = None):
@@ -717,7 +705,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
           </details>
         </div>
       </div>
-    """
+    "
     return respond(content, "Appeal your Roblox Ban", 200)
 
 @router.post("/roblox/submit")
@@ -754,6 +742,7 @@ async def roblox_submit(
     _appeal_rate_limit[user_id] = now
 
     appeal_id = str(uuid.uuid4())[:8]
+    short_ban_reason = data.get("ban_reason_short", "N/A")
 
     if is_supabase_ready():
         await supabase_request(
@@ -765,10 +754,18 @@ async def roblox_submit(
                 "roblox_username": data["runame"],
                 "appeal_text": appeal_reason,
                 "ban_data": data.get("ban_data"),
-                "short_ban_reason": data.get("ban_reason_short"),
+                "short_ban_reason": short_ban_reason,
                 "ip_hash": hash_ip(ip),
             },
         )
+    
+    await post_roblox_appeal_embed(
+        appeal_id=appeal_id,
+        roblox_username=data["runame"],
+        roblox_id=user_id,
+        short_ban_reason=short_ban_reason,
+        appeal_reason=appeal_reason,
+    )
     
     _used_sessions[token_hash] = now
     _appeal_locked[user_id] = True
@@ -784,8 +781,6 @@ async def roblox_submit(
       </div>
     """
     return HTMLResponse(render_page("Appeal Submitted", success, lang=current_lang, strings=strings), status_code=200, headers={"Cache-Control": "no-store"})
-
-# ... (rest of the file is unchanged)
 
 
 @router.post("/submit")

@@ -16,7 +16,31 @@ serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 
 
 def persist_user_session(response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> None:
-    token = serializer.dumps({"uid": user_id, "uname": username, "iat": time.time(), "display_name": display_name or username})
+    token = serializer.dumps({
+        "type": "discord",
+        "uid": user_id,
+        "uname": username,
+        "iat": time.time(),
+        "display_name": display_name or username
+    })
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=PERSIST_SESSION_SECONDS,
+        secure=True,
+        httponly=True,
+        samesite="Lax",
+    )
+
+
+def persist_roblox_user_session(response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> None:
+    token = serializer.dumps({
+        "type": "roblox",
+        "ruid": user_id,
+        "runame": username,
+        "iat": time.time(),
+        "display_name": display_name or username
+    })
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
@@ -29,12 +53,21 @@ def persist_user_session(response: Response, user_id: str, username: str, displa
 
 def maybe_persist_session(response: Response, session: Optional[dict], refreshed: bool) -> None:
     if session and refreshed:
-        persist_user_session(
-            response,
-            session["uid"],
-            session.get("uname") or "",
-            display_name=session.get("display_name"),
-        )
+        if session.get("type") == "discord":
+            persist_user_session(
+                response,
+                session["uid"],
+                session.get("uname") or "",
+                display_name=session.get("display_name"),
+            )
+        # Note: Roblox session refresh is not implemented yet
+        elif session.get("type") == "roblox":
+             persist_roblox_user_session(
+                response,
+                session["ruid"],
+                session.get("runame") or "",
+                display_name=session.get("display_name"),
+            )
 
 
 def read_user_session(request: Request) -> Optional[dict]:
@@ -53,22 +86,32 @@ def read_user_session(request: Request) -> Optional[dict]:
 async def refresh_session_profile(session: Optional[dict]) -> Tuple[Optional[dict], bool]:
     if not session:
         return None, False
-    user_id = session.get("uid")
-    if not user_id:
+
+    # Handle Discord session refresh
+    if session.get("type") == "discord":
+        user_id = session.get("uid")
+        if not user_id:
+            return session, False
+        token = await get_valid_access_token(str(user_id))
+        if not token:
+            return session, False
+        try:
+            user = await fetch_discord_user(token)
+            uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
+            display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
+            updated = dict(session)
+            updated["uname"] = uname_label
+            updated["display_name"] = display_name
+            updated["iat"] = time.time()
+            return updated, True
+        except Exception as exc:
+            logging.debug("Discord profile refresh failed for %s: %s", user_id, exc)
+            return session, False
+
+    # Placeholder for Roblox session refresh
+    if session.get("type") == "roblox":
+        # Roblox token refresh logic would go here if implemented
         return session, False
-    token = await get_valid_access_token(str(user_id))
-    if not token:
-        return session, False
-    try:
-        user = await fetch_discord_user(token)
-    except Exception as exc:
-        logging.debug("Profile refresh failed for %s: %s", user_id, exc)
-        return session, False
-    uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
-    display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
-    updated = dict(session)
-    updated["uname"] = uname_label
-    updated["display_name"] = display_name
-    updated["iat"] = time.time()
-    return updated, True
+
+    return session, False
 

@@ -587,6 +587,11 @@ a:hover {
   background: rgba(124, 92, 255, 0.12);
 }
 
+.btn--roblox {
+  border-color: rgba(252, 88, 88, 0.25);
+  background: rgba(252, 88, 88, 0.12);
+}
+
 .btn--wide {
   width: 100%;
 }

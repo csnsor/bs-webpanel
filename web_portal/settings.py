@@ -25,6 +25,16 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_TABLE = "discord-appeals"
 SUPABASE_SESSION_TABLE = "discord-appeal-sessions"
 SUPABASE_CONTEXT_TABLE = "banned_user_context"
+
+# Roblox settings
+ROBLOX_CLIENT_ID = os.getenv("ROBLOX_CLIENT_ID")
+ROBLOX_CLIENT_SECRET = os.getenv("ROBLOX_CLIENT_SECRET")
+ROBLOX_REDIRECT_URI = os.getenv("ROBLOX_REDIRECT_URI", "https://bs-appeals.up.railway.app/oauth/roblox/callback")
+ROBLOX_BAN_API_KEY = os.getenv("ROBLOX_BAN_API_KEY")
+ROBLOX_BAN_API_URL = os.getenv("ROBLOX_BAN_API_URL")  # The base URL for the ban/restriction API
+ROBLOX_SUPABASE_TABLE = "roblox-appeals"
+
+
 INVITE_LINK = "https://discord.gg/blockspin"
 MESSAGE_CACHE_GUILD_ID_DEFAULT = "1337420081382297682"
 MESSAGE_CACHE_GUILD_ID_RAW = (os.getenv("MESSAGE_CACHE_GUILD_ID") or MESSAGE_CACHE_GUILD_ID_DEFAULT).split(",")[0].strip()
@@ -42,7 +52,10 @@ BOT_MESSAGE_LOG_CONTENT = os.getenv("BOT_MESSAGE_LOG_CONTENT", "false").lower() 
 ENABLE_MESSAGE_SNAPSHOTS = os.getenv("ENABLE_MESSAGE_SNAPSHOTS", "false").lower() in {"1", "true", "yes", "on"}
 
 OAUTH_SCOPES = "identify guilds.join"
+ROBLOX_OAUTH_SCOPES = "openid profile"
 DISCORD_API_BASE = "https://discord.com/api/v10"
+ROBLOX_API_BASE = "https://apis.roblox.com"
+
 
 # Basic portal settings
 APPEAL_COOLDOWN_SECONDS = int(os.getenv("APPEAL_COOLDOWN_SECONDS", "300"))  # 5 minutes by default
@@ -69,6 +82,10 @@ def validate_required_envs() -> None:
             "DISCORD_REDIRECT_URI": DISCORD_REDIRECT_URI,
             "DISCORD_BOT_TOKEN": DISCORD_BOT_TOKEN,
             "DISCORD_PUBLIC_KEY": DISCORD_PUBLIC_KEY,
+            "ROBLOX_CLIENT_ID": ROBLOX_CLIENT_ID,
+            "ROBLOX_CLIENT_SECRET": ROBLOX_CLIENT_SECRET,
+            "ROBLOX_REDIRECT_URI": ROBLOX_REDIRECT_URI,
+            "ROBLOX_BAN_API_KEY": ROBLOX_BAN_API_KEY,
         }.items()
         if not val
     ]

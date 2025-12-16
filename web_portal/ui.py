@@ -123,20 +123,36 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     """
 
 
-def build_user_chip(session: Optional[dict], *, login_url: Optional[str] = None) -> str:
+def build_user_chip(
+    session: Optional[dict],
+    *,
+    discord_login_url: Optional[str] = None,
+    roblox_login_url: Optional[str] = None,
+) -> str:
     if not session:
-        if not login_url:
-            login_url = "/status"
         return f"""
           <div class="top__actions">
-            <a class="btn btn--discord" href="{html.escape(login_url)}" aria-label="Sign in with Discord">
-              <span class="btn__icon" aria-hidden="true">⌁</span>
-              Continue with Discord
+            <a class="btn btn--discord" href="{html.escape(discord_login_url or '#')}" aria-label="Sign in with Discord">
+              Sign in with Discord
+            </a>
+            <a class="btn btn--roblox" href="{html.escape(roblox_login_url or '#')}" aria-label="Sign in with Roblox">
+              Sign in with Roblox
             </a>
           </div>
         """
 
-    name = clean_display_name(session.get("display_name") or session.get("uname") or "")
+    name = clean_display_name(session.get("display_name") or session.get("uname") or session.get("runame") or "")
+    if session.get("type") == "roblox":
+        return f"""
+          <div class="top__actions" aria-label="User actions">
+            <a class="btn btn--ghost" href="/logout" aria-label="Logout {html.escape(name)}">Logout</a>
+            <a class="btn btn--roblox" href="/status" aria-label="Open appeal status">
+              Appeal Status
+            </a>
+          </div>
+        """
+
+    # Default to Discord
     return f"""
       <div class="top__actions" aria-label="User actions">
         <a class="btn btn--ghost" href="/logout" aria-label="Logout {html.escape(name)}">Logout</a>

@@ -13,20 +13,28 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from itsdangerous import BadSignature
 
 from ..i18n import detect_language, get_strings, translate_text
+from ..services import roblox_api
 from ..services.discord_api import (
     ensure_dm_guild_membership,
     exchange_code_for_token,
     fetch_ban_if_exists,
     fetch_discord_user,
     fetch_guild_name,
-    oauth_authorize_url,
+    oauth_authorize_url as discord_oauth_authorize_url,
     post_appeal_embed,
     send_log_message,
     store_user_token,
 )
 from ..services.message_cache import fetch_message_cache
 from ..services.security import enforce_ip_rate_limit, issue_state_token, validate_state_token
-from ..services.sessions import maybe_persist_session, persist_user_session, read_user_session, refresh_session_profile, serializer
+from ..services.sessions import (
+    maybe_persist_session,
+    persist_roblox_user_session,
+    persist_user_session,
+    read_user_session,
+    refresh_session_profile,
+    serializer,
+)
 from ..services.supabase import (
     fetch_appeal_history,
     get_remote_last_submit,
@@ -39,6 +47,7 @@ from ..services.supabase import (
 from ..settings import (
     APPEAL_COOLDOWN_SECONDS,
     APPEAL_WINDOW_SECONDS,
+    ROBLOX_SUPABASE_TABLE,
     SESSION_COOKIE_NAME,
     SESSION_TTL_SECONDS,
     STATUS_DATA_CACHE_TTL_SECONDS,
@@ -72,9 +81,12 @@ async def home(request: Request, lang: Optional[str] = None):
     user_session = read_user_session(request)
     user_session, session_refreshed = await refresh_session_profile(user_session)
     strings = dict(strings)
-    login_url = oauth_authorize_url(state)
+    discord_login_url = discord_oauth_authorize_url(state)
+    roblox_login_url = roblox_api.oauth_authorize_url(state)
 
-    strings["top_actions"] = build_user_chip(user_session, login_url=login_url)
+    strings["top_actions"] = build_user_chip(
+        user_session, discord_login_url=discord_login_url, roblox_login_url=roblox_login_url
+    )
 
     content = f"""
     <section class="hero">
@@ -89,12 +101,12 @@ async def home(request: Request, lang: Optional[str] = None):
         </h1>
 
         <p class="hero__sub">
-          Authenticate with Discord, review your status, and submit a clear, respectful appeal to BlockSpin moderators.
+          Authenticate with Discord or Roblox, review your status, and submit a clear, respectful appeal to BlockSpin moderators.
         </p>
 
         <div class="hero__cta">
-          <a class="btn btn--primary" href="{html.escape(login_url)}" aria-label="Appeal ban (starts sign-in if needed)">
-            Appeal Ban
+          <a class="btn btn--primary" href="{html.escape(discord_login_url)}" aria-label="Appeal with Discord">
+            Appeal with Discord
           </a>
           <a class="btn btn--soft" href="/status">
             View Status
@@ -121,7 +133,7 @@ async def home(request: Request, lang: Optional[str] = None):
         <div class="panel">
           <h2 class="panel__title">How it works</h2>
           <ol class="steps">
-            <li><span class="steps__n">1</span> Sign in with Discord to confirm identity.</li>
+            <li><span class="steps__n">1</span> Sign in to confirm your identity.</li>
             <li><span class="steps__n">2</span> Review your appeal status + history.</li>
             <li><span class="steps__n">3</span> Submit one appeal with concise evidence.</li>
           </ol>
@@ -130,7 +142,8 @@ async def home(request: Request, lang: Optional[str] = None):
           </div>
 
           <div class="panel__actions">
-            <a class="btn btn--discord btn--wide" href="{html.escape(login_url)}">Continue with Discord</a>
+            <a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Continue with Discord</a>
+            <a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Continue with Roblox</a>
             <div class="legal">
               <a href="/tos">Terms</a>
               <span class="dot" aria-hidden="true"></span>
@@ -337,13 +350,17 @@ async def status_page(request: Request, lang: Optional[str] = None):
     if not session:
         state_token = issue_state_token(ip)
         state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
-        login_url = oauth_authorize_url(state)
-        strings["top_actions"] = build_user_chip(None, login_url=login_url)
+        discord_login_url = discord_oauth_authorize_url(state)
+        roblox_login_url = roblox_api.oauth_authorize_url(state)
+        strings["top_actions"] = build_user_chip(
+            None, discord_login_url=discord_login_url, roblox_login_url=roblox_login_url
+        )
         content = f"""
           <div class="card status danger">
             <h1 style="margin-bottom:10px;">Sign in required</h1>
             <p class="muted">Sign in to view your BlockSpin appeal history and live status.</p>
-            <a class="btn btn--discord" href="{login_url}"><span class="btn__icon" aria-hidden="true">⌁</span>{strings['login']}</a>
+            <a class="btn btn--discord" href="{discord_login_url}"><span class="btn__icon" aria-hidden="true">⌁</span>{strings['login']}</a>
+             <a class="btn btn--roblox" href="{roblox_login_url}">{strings['login_roblox']}</a>
           </div>
         """
         resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), status_code=401, headers={"Cache-Control": "no-store"})
@@ -351,8 +368,9 @@ async def status_page(request: Request, lang: Optional[str] = None):
         return resp
     strings["top_actions"] = build_user_chip(session)
 
+    user_id = session.get("uid") or session.get("ruid")
     if is_supabase_ready():
-        history = await fetch_appeal_history(session["uid"], limit=10)
+        history = await fetch_appeal_history(user_id, limit=10)
         history_html = render_history_items(history, format_timestamp=format_timestamp)
     else:
         history_html = "<div class='muted'></div>"
@@ -596,6 +614,163 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
       {window_script}
     """
     return respond(content, "Appeal your ban", 200)
+
+
+@router.get("/oauth/roblox/callback")
+async def roblox_callback(request: Request, code: str, state: str, lang: Optional[str] = None):
+    try:
+        state_data = serializer.loads(state)
+    except BadSignature:
+        raise HTTPException(status_code=400, detail="Invalid state")
+
+    current_lang = normalize_language(lang or state_data.get("lang"))
+    strings = await get_strings(current_lang)
+
+    token = await roblox_api.exchange_code_for_token(code)
+    user = await roblox_api.get_user_info(token["access_token"])
+    user_id = user["sub"]
+    uname_label = user.get("name") or user.get("preferred_username")
+    display_name = clean_display_name(user.get("nickname") or uname_label)
+
+    ip = get_client_ip(request)
+    state_id = state_data.get("state_id")
+    if not validate_state_token(state_id, ip):
+        raise HTTPException(status_code=400, detail="Invalid or replayed state")
+    asyncio.create_task(send_log_message(f"[auth_roblox] user={user_id} ip_hash={hash_ip(ip)} lang={current_lang}"))
+
+    # Placeholder for fetching Roblox appeal history
+    history_html = "<div class='muted'>Appeal history for Roblox is not yet implemented.</div>"
+
+    strings = dict(strings)
+    strings["user_chip"] = build_user_chip({"type": "roblox", "display_name": display_name, "runame": uname_label})
+
+    def respond(body_html: str, title: str, status_code: int = 200) -> HTMLResponse:
+        resp = HTMLResponse(render_page(title, body_html, lang=current_lang, strings=strings), status_code=status_code, headers={"Cache-Control": "no-store"})
+        persist_roblox_user_session(resp, user_id, uname_label, display_name=display_name)
+        resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+        return resp
+
+    ban = await roblox_api.get_live_ban_status(user_id)
+    if not ban:
+        content = f"""
+          <div class="card status">
+            <p>No active ban found for Roblox user {html.escape(uname_label)}.</p>
+            <a class="btn" href="/">Back home</a>
+          </div>
+        """
+        return respond(content, "No active ban", 200)
+
+    ban_history = await roblox_api.get_ban_history(user_id)
+
+    session_token = serializer.dumps(
+        {
+            "ruid": user_id,
+            "runame": uname_label,
+            "ban_data": ban,
+            "ban_history": ban_history,
+            "iat": time.time(),
+            "lang": current_lang,
+        }
+    )
+    ban_reason_raw = ban.get("displayReason") or "No reason provided."
+    ban_reason = html.escape(ban_reason_raw)
+    user_id_label = html.escape(str(user_id))
+
+    content = f"""
+      <div class="grid-2">
+        <div class="form-card">
+          <h2 style="margin:8px 0;">Appeal your Roblox Ban</h2>
+          <p class="muted">One appeal per ban. Be clear and concise.</p>
+          <form class="form" action="/roblox/submit" method="post">
+            <input type="hidden" name="session" value="{html.escape(session_token)}" />
+            <div class="field">
+              <label for="appeal_reason">Why should you be unbanned?</label>
+              <textarea name="appeal_reason" required placeholder="Explain what happened and why you should be allowed back."></textarea>
+            </div>
+            <button class="btn btn--roblox" type="submit">Submit Appeal</button>
+          </form>
+        </div>
+        <div class="card">
+          <details class="details" open>
+            <summary>Ban Details</summary>
+            <div class="details-body">
+              <div class="kv">
+                <div class="kv-row"><div class="k">User</div><div class="v">{html.escape(uname_label)}</div></div>
+                <div class="kv-row"><div class="k">User ID</div><div class="v">{user_id_label}</div></div>
+                <div class="kv-row"><div class="k">Reason</div><div class="v">{ban_reason}</div></div>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+    """
+    return respond(content, "Appeal your Roblox Ban", 200)
+
+
+@router.post("/roblox/submit")
+async def roblox_submit(
+    request: Request,
+    session: str = Form(...),
+    appeal_reason: str = Form(...),
+):
+    try:
+        data = serializer.loads(session)
+    except BadSignature:
+        raise HTTPException(status_code=400, detail="Invalid session")
+
+    now = time.time()
+    if len(appeal_reason or "") > 2000:
+        raise HTTPException(status_code=400, detail="Appeal reason too long. Please keep it under 2000 characters.")
+
+    token_hash = hash_value(session)
+    issued_at = float(data.get("iat", 0))
+    if not issued_at or now - issued_at > SESSION_TTL_SECONDS:
+        raise HTTPException(status_code=400, detail="This form session expired. Please restart the appeal.")
+    if _used_sessions.get(token_hash):
+        raise HTTPException(status_code=409, detail="This appeal was already submitted.")
+
+    ip = get_client_ip(request)
+    user_id = data["ruid"]
+    enforce_ip_rate_limit(ip)
+    asyncio.create_task(send_log_message(f"[roblox_appeal_attempt] user={user_id} ip_hash={hash_ip(ip)}"))
+
+    # Simplified rate limiting for Roblox appeals
+    last = _appeal_rate_limit.get(user_id)
+    if last and now - last < APPEAL_COOLDOWN_SECONDS:
+        wait = int(APPEAL_COOLDOWN_SECONDS - (now - last))
+        raise HTTPException(status_code=429, detail=f"Please wait {wait} seconds before submitting another appeal.")
+    _appeal_rate_limit[user_id] = now
+
+    appeal_id = str(uuid.uuid4())[:8]
+
+    if is_supabase_ready():
+        await supabase_request(
+            "post",
+            ROBLOX_SUPABASE_TABLE,
+            payload={
+                "appeal_id": appeal_id,
+                "roblox_id": user_id,
+                "roblox_username": data["runame"],
+                "appeal_text": appeal_reason,
+                "ban_data": data.get("ban_data"),
+                "ip_hash": hash_ip(ip),
+            },
+        )
+
+    _used_sessions[token_hash] = now
+    _appeal_locked[user_id] = True
+
+    current_lang = data.get("lang", "en")
+    strings = await get_strings(current_lang)
+    success = f"""
+      <div class="card">
+        <h1>Appeal Submitted</h1>
+        <p>Reference ID: <strong>{html.escape(appeal_id)}</strong></p>
+        <p class="muted">Your Roblox appeal has been submitted for review.</p>
+        <a class="btn" href="/">Back home</a>
+      </div>
+    """
+    return HTMLResponse(render_page("Appeal Submitted", success, lang=current_lang, strings=strings), status_code=200, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/submit")

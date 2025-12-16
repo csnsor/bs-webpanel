@@ -10,6 +10,7 @@ from .supabase import is_supabase_ready, supabase_request
 
 
 async def upsert_roblox_appeal(
+    internal_user_id: str, # New parameter
     roblox_id: str,
     roblox_username: str,
     appeal_text: str,
@@ -30,21 +31,22 @@ async def upsert_roblox_appeal(
             "get",
             ROBLOX_SUPABASE_TABLE,
             params={
-                "roblox_id": f"eq.{roblox_id}",
+                "internal_user_id": f"eq.{internal_user_id}", # Check by internal_user_id
                 "status": "eq.pending",
                 "limit": 1,
             },
         )
         if existing_appeals and isinstance(existing_appeals, list) and len(existing_appeals) > 0:
             appeal_id = existing_appeals[0]['id']
-            logging.warning(f"Found existing pending appeal {appeal_id} for Roblox ID {roblox_id}. It will be overwritten.")
+            logging.warning(f"Found existing pending appeal {appeal_id} for internal user ID {internal_user_id}. It will be overwritten.")
         else:
             appeal_id = None
     except Exception as exc:
-        logging.error(f"Error checking for existing Roblox appeal for {roblox_id}: {exc}")
+        logging.error(f"Error checking for existing Roblox appeal for {internal_user_id}: {exc}")
         return None
 
     payload = {
+        "internal_user_id": internal_user_id, # Store internal user ID
         "roblox_id": roblox_id,
         "roblox_username": roblox_username,
         "appeal_text": appeal_text,
@@ -174,26 +176,16 @@ async def update_roblox_appeal_moderation_status(
 
 
 async def get_roblox_appeal_history(
-    roblox_id: Optional[str] = None, discord_user_id: Optional[str] = None, limit: int = 25
+    internal_user_id: str, limit: int = 25
 ) -> List[Dict[str, Any]]:
     """
-    Retrieves a list of Roblox appeals for a given Roblox ID, Discord user ID, or both.
-    If both IDs are provided, it fetches records matching either ID.
+    Retrieves a list of Roblox appeals for a given internal user ID.
     """
-    if not is_supabase_ready() or (not roblox_id and not discord_user_id):
+    if not is_supabase_ready():
         return []
 
-    filters = []
-    if roblox_id:
-        filters.append(f"roblox_id.eq.{roblox_id}")
-    if discord_user_id:
-        filters.append(f"discord_user_id.eq.{discord_user_id}")
-
-    # Join filters with ',' for an 'OR' condition in Supabase
-    or_filter = ",".join(filters)
-    
     params = {
-        "or": f"({or_filter})",
+        "internal_user_id": f"eq.{internal_user_id}",
         "order": "created_at.desc",
         "limit": min(limit, 100),
     }
@@ -202,5 +194,5 @@ async def get_roblox_appeal_history(
         records = await supabase_request("get", ROBLOX_SUPABASE_TABLE, params=params)
         return records if records and isinstance(records, list) else []
     except Exception as exc:
-        logging.error(f"Error getting Roblox appeal history for roblox_id={roblox_id}, discord_user_id={discord_user_id}: {exc}")
+        logging.error(f"Error getting Roblox appeal history for internal_user_id={internal_user_id}: {exc}")
         return []

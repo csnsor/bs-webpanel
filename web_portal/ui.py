@@ -132,31 +132,37 @@ def build_user_chip(
     if not session:
         return f"""
           <div class="top__actions">
-            <a class="btn btn--discord" href="{html.escape(discord_login_url or '#')}" aria-label="Sign in with Discord">
-              Sign in with Discord
+            <a class="btn btn--discord" href="{html.escape(discord_login_url or '#')}" aria-label="Login with Discord">
+              Login with Discord
             </a>
-            <a class="btn btn--roblox" href="{html.escape(roblox_login_url or '#')}" aria-label="Sign in with Roblox">
-              Sign in with Roblox
+            <a class="btn btn--roblox" href="{html.escape(roblox_login_url or '#')}" aria-label="Login with Roblox">
+              Login with Roblox
             </a>
           </div>
         """
 
-    has_discord = "uid" in session
-    has_roblox = "ruid" in session
-    name = clean_display_name(session.get("display_name") or session.get("uname") or session.get("runame") or "")
+    logged_in_platform = session.get("logged_in_platform")
+    name = clean_display_name(session.get("display_name") or "")
 
     buttons = []
 
-    if name:
-        buttons.append(f"<span class='greeting'>Hi, {html.escape(name)}</span>")
-
-    if has_discord and has_roblox:
+    if logged_in_platform == "discord":
+        user_id = session.get("uid")
+        if name:
+            buttons.append(f"<span class='greeting'>Hi, {html.escape(name)} (Discord)</span>")
+        if user_id:
+            buttons.append(f"<span class='greeting'>ID: {html.escape(str(user_id))}</span>")
+    elif logged_in_platform == "roblox":
+        user_id = session.get("ruid")
+        if name:
+            buttons.append(f"<span class='greeting'>Hi, {html.escape(name)} (Roblox)</span>")
+        if user_id:
+            buttons.append(f"<span class='greeting'>ID: {html.escape(str(user_id))}</span>")
+    
+    # Always show Appeal Status if logged into any platform
+    if logged_in_platform: # Check if any platform is logged in
         buttons.append("<a class='btn btn--primary' href='/status'>Appeal Status</a>")
-    elif has_discord and roblox_login_url:
-        buttons.append(f"<a class='btn btn--roblox' href='{html.escape(roblox_login_url)}'>Link Roblox</a>")
-    elif has_roblox and discord_login_url:
-        buttons.append(f"<a class='btn btn--discord' href='{html.escape(discord_login_url)}'>Link Discord</a>")
-        
+
     buttons.append("<a class='btn btn--ghost' href='/logout'>Logout</a>")
 
     return f'<div class="top__actions">{" ".join(buttons)}</div>'

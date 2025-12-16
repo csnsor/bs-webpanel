@@ -17,87 +17,200 @@ serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 
 
 def persist_session(
-    request: Request,
+
+
     response: Response,
-    discord_user_id: Optional[str] = None,
-    discord_username: Optional[str] = None,
-    discord_display_name: Optional[str] = None,
-    roblox_user_id: Optional[str] = None,
-    roblox_username: Optional[str] = None,
-    roblox_display_name: Optional[str] = None,
+
+
+    internal_user_id: str,
+
+
+    platform_type: str, # "discord" or "roblox"
+
+
+    platform_id: str,
+
+
+    username: str,
+
+
+    display_name: str,
+
+
 ) -> dict:
-    # Always start by reading the current session from the request cookies.
-    # This ensures that any previously set data (e.g., from the other platform) is carried over.
-    session = read_user_session(request) or {}
-    
-    # Update Discord-related fields
-    if discord_user_id:
-        session["uid"] = discord_user_id
-        session["uname"] = discord_username
-    elif "uid" in session and discord_user_id is None: # If discord_user_id is explicitly None, clear existing
-        session.pop("uid", None)
-        session.pop("uname", None)
 
-    # Update Roblox-related fields
-    if roblox_user_id:
-        session["ruid"] = roblox_user_id
-        session["runame"] = roblox_username
-    elif "ruid" in session and roblox_user_id is None: # If roblox_user_id is explicitly None, clear existing
-        session.pop("ruid", None)
-        session.pop("runame", None)
-    
-    # Handle display_name logic with precedence:
-    # 1. If discord_display_name is provided, use it.
-    # 2. Else if roblox_display_name is provided, use it.
-    # 3. Else, if a display_name exists in the session from previous data, preserve it.
-    # 4. Otherwise, ensure display_name is explicitly set to None if no new value is provided.
-    if discord_display_name is not None:
-        session["display_name"] = discord_display_name
-    elif roblox_display_name is not None:
-        session["display_name"] = roblox_display_name
-    elif "display_name" not in session: # Only if neither are provided, and not already in session
-        session["display_name"] = None # Explicitly set to None if no display name is available
 
-    session["iat"] = time.time()
-    
+    """
+
+
+    Persists a single-platform user session.
+
+
+    A new session is created, discarding any previous multi-platform session data.
+
+
+    """
+
+
+    session = {
+
+
+        "internal_user_id": internal_user_id,
+
+
+        "logged_in_platform": platform_type,
+
+
+        "iat": time.time(),
+
+
+        "display_name": display_name,
+
+
+    }
+
+
+    if platform_type == "discord":
+
+
+        session["uid"] = platform_id
+
+
+        session["uname"] = username
+
+
+    elif platform_type == "roblox":
+
+
+        session["ruid"] = platform_id
+
+
+        session["runame"] = username
+
+
+    else:
+
+
+        logging.error("Invalid platform_type passed to persist_session: %s", platform_type)
+
+
+        raise ValueError("Invalid platform_type")
+
+
+
+
+
     token = serializer.dumps(session)
+
+
     response.set_cookie(
+
+
         key=SESSION_COOKIE_NAME,
+
+
         value=token,
+
+
         max_age=PERSIST_SESSION_SECONDS,
+
+
         secure=True,
+
+
         httponly=True,
+
+
         samesite="Lax",
+
+
     )
+
+
     return session
 
 
+
+
+
+
+
+
 def maybe_persist_session(request: Request, response: Response, session: Optional[dict], refreshed: bool) -> None:
+
+
     if session: # Only proceed if there's a session to persist
+
+
         session["iat"] = time.time() # Update iat to current time (sliding expiration)
+
+
         token = serializer.dumps(session)
+
+
         response.set_cookie(
+
+
             key=SESSION_COOKIE_NAME,
+
+
             value=token,
+
+
             max_age=PERSIST_SESSION_SECONDS,
+
+
             secure=True,
+
+
             httponly=True,
+
+
             samesite="Lax",
+
+
         )
 
 
 
+
+
+
+
+
 def read_user_session(request: Request) -> Optional[dict]:
+
+
     raw = request.cookies.get(SESSION_COOKIE_NAME)
+
+
     if not raw:
+
+
         return None
+
+
     try:
+
+
         data = serializer.loads(raw)
-        if time.time() - float(data.get("iat", 0)) > PERSIST_SESSION_SECONDS * 2:
-            return None
+
+
+        # Session is considered valid until explicitly cleared or replaced.
+
+
+        # The `iat` is still stored, but not used for auto-invalidation here.
+
+
         return data
+
+
     except BadSignature:
+
+
         logging.warning("Invalid session cookie signature. Session potentially tampered with or corrupt.")
+
+
         return None
 
 
@@ -107,9 +220,14 @@ async def refresh_session_profile(session: Optional[dict]) -> Tuple[Optional[dic
 
     updated = dict(session)
     refreshed = False
+    
+    logged_in_platform = updated.get("logged_in_platform")
+    if not logged_in_platform:
+        logging.debug("Session has no logged_in_platform, skipping profile refresh.")
+        return session, False
 
     # Handle Discord session refresh
-    if "uid" in updated:
+    if logged_in_platform == "discord" and "uid" in updated:
         user_id = updated["uid"]
         token = await get_valid_discord_token(str(user_id))
         if token:
@@ -124,7 +242,7 @@ async def refresh_session_profile(session: Optional[dict]) -> Tuple[Optional[dic
                 logging.debug("Discord profile refresh failed for %s: %s", user_id, exc)
 
     # Handle Roblox session refresh
-    if "ruid" in updated:
+    elif logged_in_platform == "roblox" and "ruid" in updated:
         user_id = updated["ruid"]
         token = await get_valid_roblox_token(str(user_id))
         if token:
@@ -133,9 +251,7 @@ async def refresh_session_profile(session: Optional[dict]) -> Tuple[Optional[dic
                 uname_label = user.get("name") or user.get("preferred_username")
                 display_name = clean_display_name(user.get("nickname") or uname_label)
                 updated["runame"] = uname_label
-                # Give preference to Discord display name if available
-                if "display_name" not in updated:
-                    updated["display_name"] = display_name
+                updated["display_name"] = display_name # Roblox display name is now primary for Roblox session
                 refreshed = True
             except Exception as exc:
                 logging.debug("Roblox profile refresh failed for %s: %s", user_id, exc)

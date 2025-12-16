@@ -1046,7 +1046,8 @@ async def supabase_request(method: str, table: str, *, params: Optional[dict] = 
 
 async def log_appeal_to_supabase(
     appeal_id: str,
-    user: dict,
+    user: dict, # This is the Discord user info (uid, uname)
+    internal_user_id: str, # New parameter
     ban_reason: str,
     ban_evidence: str,
     appeal_reason: str,
@@ -1059,7 +1060,8 @@ async def log_appeal_to_supabase(
 ):
     payload = {
         "appeal_id": appeal_id,
-        "user_id": user["id"],
+        "user_id": user["id"], # Discord user ID
+        "internal_user_id": internal_user_id, # Store internal user ID
         "username": user.get("username"),
         "guild_id": TARGET_GUILD_ID,
         "ban_reason": ban_reason,
@@ -1126,9 +1128,9 @@ async def update_appeal_status(
     await supabase_request("patch", SUPABASE_TABLE, params={"appeal_id": f"eq.{appeal_id}"}, payload=payload, prefer="return=minimal")
 
 
-async def fetch_appeal_history(user_id: str, limit: int = 25, *, select: Optional[str] = None) -> List[dict]:
+async def fetch_appeal_history(internal_user_id: str, limit: int = 25, *, select: Optional[str] = None) -> List[dict]:
     params = {
-        "user_id": f"eq.{user_id}",
+        "internal_user_id": f"eq.{internal_user_id}",
         "order": "created_at.desc",
         "limit": min(limit, 100),
     }
@@ -1700,7 +1702,7 @@ async def home(request: Request, lang: Optional[str] = None):
     strings["user_chip"] = user_chip
     history_html = ""
     if user_session and is_supabase_ready():
-        history = await fetch_appeal_history(user_session["uid"], limit=5)
+        history = await fetch_appeal_history(user_session["internal_user_id"], limit=5)
         history_html = render_history_items(history)
     elif user_session:
         history_html = "<div class='muted'></div>"
@@ -1906,7 +1908,7 @@ async def status_page(request: Request, lang: Optional[str] = None):
 
     history_html = ""
     if is_supabase_ready():
-        history = await fetch_appeal_history(session["uid"], limit=10)
+        history = await fetch_appeal_history(session["internal_user_id"], limit=10)
         history_html = render_history_items(history)
     else:
         history_html = "<div class='muted'></div>"
@@ -1943,7 +1945,7 @@ async def status_data(request: Request):
         return cached[0]
 
     history = await fetch_appeal_history(
-        session["uid"],
+        session["internal_user_id"],
         limit=5,
         select="appeal_id,status,created_at,ban_reason",
     )
@@ -1997,7 +1999,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
 
     history_html = ""
     if is_supabase_ready():
-        history = await fetch_appeal_history(user["id"], limit=10)
+        history = await fetch_appeal_history(internal_user_id, limit=10)
         history_html = render_history_items(history)
     else:
         history_html = "<div class='muted'></div>"

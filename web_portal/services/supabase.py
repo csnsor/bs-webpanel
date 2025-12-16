@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import httpx
 
 from ..clients import get_http_client
-from ..settings import SUPABASE_KEY, SUPABASE_SESSION_TABLE, SUPABASE_TABLE, SUPABASE_URL, TARGET_GUILD_ID
+from ..settings import SUPABASE_KEY, SUPABASE_SESSION_TABLE, SUPABASE_TABLE, SUPABASE_URL, TARGET_GUILD_ID, USERS_TABLE # Added USERS_TABLE
 from ..utils import simplify_ban_reason
 
 
@@ -22,7 +22,7 @@ async def supabase_request(
     params: Optional[dict] = None,
     payload: Optional[dict] = None,
     prefer: Optional[str] = None,
-):
+) -> Optional[Any]:
     if not is_supabase_ready():
         return None
     headers = {
@@ -56,123 +56,91 @@ async def supabase_request(
         logging.warning("Supabase request failed table=%s method=%s error=%s", table, method, exc)
     return None
 
+# --- New user management functions ---
 
-async def log_appeal_to_supabase(
-    appeal_id: str,
-    user: dict,
-    ban_reason: str,
-    ban_evidence: str,
-    appeal_reason: str,
-    appeal_reason_original: str,
-    user_lang: str,
-    message_cache: Optional[List[dict]],
-    ip: str,
-    forwarded_for: str,
-    user_agent: str,
-):
-    payload = {
-        "appeal_id": appeal_id,
-        "user_id": user["id"],
-        "username": user.get("username"),
-        "guild_id": TARGET_GUILD_ID,
-        "ban_reason": ban_reason,
-        "ban_evidence": ban_evidence,
-        "appeal_reason": appeal_reason,
-        "appeal_reason_original": appeal_reason_original,
-        "user_lang": user_lang,
-        "status": "pending",
-        "ip": ip,
-        "forwarded_for": forwarded_for,
-        "user_agent": user_agent,
-        "message_cache": message_cache,
-    }
-    await supabase_request("post", SUPABASE_TABLE, payload=payload, prefer="return=minimal")
-
-
-async def get_remote_last_submit(user_id: str) -> Optional[float]:
-    recs = await supabase_request(
-        "get",
-        SUPABASE_SESSION_TABLE,
-        params={"user_id": f"eq.{user_id}", "order": "last_submit.desc", "limit": 1, "select": "last_submit"},
-    )
-    if recs:
-        try:
-            return float(recs[0].get("last_submit") or 0)
-        except Exception:
-            return None
-    return None
-
-
-async def is_session_token_used(token_hash: str) -> bool:
-    recs = await supabase_request(
-        "get",
-        SUPABASE_SESSION_TABLE,
-        params={"token_hash": f"eq.{token_hash}", "limit": 1, "select": "token_hash"},
-    )
-    return bool(recs)
-
-
-async def mark_session_token(token_hash: str, user_id: str, ts: float):
-    payload = {"token_hash": token_hash, "user_id": user_id, "last_submit": int(ts)}
-    await supabase_request(
-        "post",
-        SUPABASE_SESSION_TABLE,
-        payload=payload,
-        prefer="resolution=merge-duplicates,return=minimal",
-    )
-
-
-async def update_appeal_status(
-    appeal_id: str,
-    status: str,
-    moderator_id: Optional[str],
-    dm_delivered: bool,
-    notes: Optional[str] = None,
-):
-    payload = {
-        "status": status,
-        "decision_by": moderator_id,
-        "decision_at": int(time.time()),
-        "dm_delivered": dm_delivered,
-        "notes": notes,
-    }
-    await supabase_request(
-        "patch",
-        SUPABASE_TABLE,
-        params={"appeal_id": f"eq.{appeal_id}"},
-        payload=payload,
-        prefer="return=minimal",
-    )
-
-
-async def fetch_appeal_history(user_id: str, limit: int = 25, *, select: Optional[str] = None) -> List[dict]:
-    params = {
-        "user_id": f"eq.{user_id}",
-        "order": "created_at.desc",
-        "limit": min(limit, 100),
-    }
-    if select:
-        params["select"] = select
-    else:
-        params["select"] = "appeal_id,status,created_at,ban_reason,appeal_reason"
-    records = await supabase_request("get", SUPABASE_TABLE, params=params)
-    cleaned = records or []
-    for item in cleaned:
-        try:
-            if isinstance(item, dict) and item.get("ban_reason") is not None:
-                item["ban_reason"] = simplify_ban_reason(item.get("ban_reason")) or item.get("ban_reason")
-        except Exception:
-            pass
-    return cleaned
-
-
-async def fetch_appeal_record(appeal_id: str) -> Optional[dict]:
+async def get_internal_user_by_platform_id(platform_id: str, platform_type: Literal["discord", "roblox"]) -> Optional[Dict[str, Any]]:
+    """Retrieves an internal user record by their Discord or Roblox ID."""
+    column_name = f"{platform_type}_id"
     records = await supabase_request(
         "get",
-        SUPABASE_TABLE,
-        params={"appeal_id": f"eq.{appeal_id}", "limit": 1},
+        USERS_TABLE,
+        params={column_name: f"eq.{platform_id}", "limit": 1},
     )
     if records:
         return records[0]
     return None
+
+async def create_internal_user(discord_id: Optional[str] = None, roblox_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Creates a new internal user record."""
+    payload = {}
+    if discord_id:
+        payload["discord_id"] = discord_id
+    if roblox_id:
+        payload["roblox_id"] = roblox_id
+    
+    if not payload: # Must have at least one ID to create a user
+        logging.warning("Attempted to create internal user without any platform IDs.")
+        return None
+
+    records = await supabase_request(
+        "post",
+        USERS_TABLE,
+        payload=payload,
+        prefer="return=representation", # Return the created record
+    )
+    if records:
+        return records[0]
+    return None
+
+async def link_platform_id_to_internal_user(internal_user_id: str, platform_id: str, platform_type: Literal["discord", "roblox"]) -> Optional[Dict[str, Any]]:
+    """Links a platform ID to an existing internal user."""
+    column_name = f"{platform_type}_id"
+    payload = {column_name: platform_id}
+    records = await supabase_request(
+        "patch",
+        USERS_TABLE,
+        params={"id": f"eq.{internal_user_id}"},
+        payload=payload,
+        prefer="return=representation", # Return the updated record
+    )
+    if records:
+        return records[0]
+    return None
+
+async def find_or_create_and_link_user(discord_id: Optional[str] = None, roblox_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    Finds an existing internal user by Discord or Roblox ID,
+    links new IDs to an existing user, or creates a new user.
+    Returns the complete user record.
+    """
+    user_record: Optional[Dict[str, Any]] = None
+
+    # 1. Try to find by Discord ID
+    if discord_id:
+        user_record = await get_internal_user_by_platform_id(discord_id, "discord")
+    
+    # 2. If not found by Discord, try to find by Roblox ID
+    if not user_record and roblox_id:
+        user_record = await get_internal_user_by_platform_id(roblox_id, "roblox")
+
+    # 3. If user found, ensure all provided IDs are linked
+    if user_record:
+        internal_user_id = user_record["id"]
+        # Link Discord ID if not already linked
+        if discord_id and not user_record.get("discord_id"):
+            user_record = await link_platform_id_to_internal_user(internal_user_id, discord_id, "discord") or user_record
+        # Link Roblox ID if not already linked
+        if roblox_id and not user_record.get("roblox_id"):
+            user_record = await link_platform_id_to_internal_user(internal_user_id, roblox_id, "roblox") or user_record
+    else:
+        # 4. If no user found, create a new one
+        if discord_id or roblox_id:
+            user_record = await create_internal_user(discord_id, roblox_id)
+        else:
+            logging.error("find_or_create_and_link_user called without any platform IDs.")
+            return None
+    
+    return user_record
+
+# --- Existing functions (log_appeal_to_supabase, get_remote_last_submit, etc.) ---
 

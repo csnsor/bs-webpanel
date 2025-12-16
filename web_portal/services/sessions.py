@@ -73,7 +73,8 @@ def persist_session(
 
 
 def maybe_persist_session(request: Request, response: Response, session: Optional[dict], refreshed: bool) -> None:
-    if session and refreshed:
+    if session: # Only proceed if there's a session to persist
+        session["iat"] = time.time() # Update iat to current time (sliding expiration)
         token = serializer.dumps(session)
         response.set_cookie(
             key=SESSION_COOKIE_NAME,

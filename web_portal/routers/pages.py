@@ -266,22 +266,55 @@ class PageRenderer:
             roblox_login_url=roblox_login_url
         )
         
-        content = await PageRenderer._build_home_content(strings, discord_login_url, roblox_login_url)
-        
-        strings["script_nonce"] = secrets.token_urlsafe(12)
-        strings["script_block"] = PageRenderer._get_home_script()
-        
-        response = HTMLResponse(
-            render_page("BlockSpin — Appeals", content, lang=current_lang, strings=strings), 
-            headers={"Cache-Control": "no-store"}
+        content = await PageRenderer._build_home_content(
+            strings, discord_login_url, roblox_login_url, user_session
         )
-        maybe_persist_session(request, response, user_session, session_refreshed)
-        response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
-        return response
     
     @staticmethod
-    async def _build_home_content(strings: Dict[str, str], discord_login_url: str, roblox_login_url: str) -> str:
+    async def _build_home_content(
+        strings: Dict[str, str], 
+        discord_login_url: str, 
+        roblox_login_url: str, 
+        session: Optional[Dict[str, Any]] = None
+    ) -> str:
         """Build the content for the home page."""
+        
+        session = session or {}
+        has_discord = "uid" in session
+        has_roblox = "ruid" in session
+
+        # Action buttons in the hero section
+        hero_actions = []
+        if not has_discord:
+            hero_actions.append(f"""
+                <a class="btn btn--primary" href="{html.escape(discord_login_url)}" aria-label="Appeal with Discord">
+                    Appeal with Discord
+                </a>
+            """)
+        if not has_roblox:
+             hero_actions.append(f"""
+                <a class="btn btn--soft" href="{html.escape(roblox_login_url)}" aria-label="Appeal with Roblox">
+                    Appeal with Roblox
+                </a>
+            """)
+        
+        if not hero_actions:
+            pass
+
+        # Action buttons in the side panel
+        panel_actions = []
+        if not has_discord:
+            panel_actions.append(
+                f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Continue with Discord</a>'
+            )
+        if not has_roblox:
+            panel_actions.append(
+                f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Continue with Roblox</a>'
+            )
+
+        if not panel_actions:
+            panel_actions.append('<p class="muted">You are signed into both platforms.</p><a class="btn btn--soft btn--wide" href="/status">Check Appeal Status</a>')
+
         return f"""
         <section class="hero">
           <div class="hero__card">
@@ -299,12 +332,7 @@ class PageRenderer:
             </p>
 
             <div class="hero__cta">
-              <a class="btn btn--primary" href="{html.escape(discord_login_url)}" aria-label="Appeal with Discord">
-                Appeal with Discord
-              </a>
-              <a class="btn btn--soft" href="/status">
-                View Status
-              </a>
+              {"".join(hero_actions)}
             </div>
 
             <div class="hero__meta">
@@ -336,8 +364,7 @@ class PageRenderer:
               </div>
 
               <div class="panel__actions">
-                <a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Continue with Discord</a>
-                <a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Continue with Roblox</a>
+                {"".join(panel_actions)}
                 <div class="legal">
                   <a href="/tos">Terms</a>
                   <span class="dot" aria-hidden="true"></span>

@@ -269,6 +269,17 @@ class PageRenderer:
         content = await PageRenderer._build_home_content(
             strings, discord_login_url, roblox_login_url, user_session
         )
+        
+        strings["script_nonce"] = secrets.token_urlsafe(12)
+        strings["script_block"] = PageRenderer._get_home_script()
+        
+        response = HTMLResponse(
+            render_page("BlockSpin — Appeals", content, lang=current_lang, strings=strings), 
+            headers={"Cache-Control": "no-store"}
+        )
+        maybe_persist_session(request, response, user_session, session_refreshed)
+        response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+        return response
     
     @staticmethod
     async def _build_home_content(

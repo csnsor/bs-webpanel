@@ -852,7 +852,19 @@ async def status_page(request: Request, lang: Optional[str] = None):
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
 
-    strings["top_actions"] = build_user_chip(session)
+    discord_login_url = None
+    roblox_login_url = None
+    if not session.get("uid") or not session.get("ruid"):
+        state_token = issue_state_token(ip)
+        state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
+        discord_login_url = discord_oauth_authorize_url(state)
+        roblox_login_url = roblox_api.oauth_authorize_url(state)
+
+    strings["top_actions"] = build_user_chip(
+        session,
+        discord_login_url=discord_login_url,
+        roblox_login_url=roblox_login_url
+    )
     display_name = html.escape(clean_display_name(session.get('display_name') or session.get('uname', 'you')))
 
     # The history is now loaded dynamically by the frontend from /status/data

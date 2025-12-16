@@ -198,8 +198,7 @@ async def home(request: Request, lang: Optional[str] = None):
           Appeals are reviewed by moderators. Decisions may be final. Don’t spam submissions.
         </div>
       </article>
-    </section>
-    "
+
 
     strings["script_nonce"] = secrets.token_urlsafe(12)
     strings["script_block"] = """

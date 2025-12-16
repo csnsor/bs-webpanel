@@ -26,25 +26,37 @@ def persist_session(
     roblox_username: Optional[str] = None,
     roblox_display_name: Optional[str] = None,
 ) -> dict:
+    # Always start by reading the current session from the request cookies.
+    # This ensures that any previously set data (e.g., from the other platform) is carried over.
     session = read_user_session(request) or {}
     
+    # Update Discord-related fields
     if discord_user_id:
         session["uid"] = discord_user_id
         session["uname"] = discord_username
-    
+    elif "uid" in session and discord_user_id is None: # If discord_user_id is explicitly None, clear existing
+        session.pop("uid", None)
+        session.pop("uname", None)
+
+    # Update Roblox-related fields
     if roblox_user_id:
         session["ruid"] = roblox_user_id
         session["runame"] = roblox_username
+    elif "ruid" in session and roblox_user_id is None: # If roblox_user_id is explicitly None, clear existing
+        session.pop("ruid", None)
+        session.pop("runame", None)
     
-    # Handle display_name logic:
-    # 1. If a discord_display_name is provided, use it.
-    # 2. Else if a roblox_display_name is provided, use it.
-    # 3. Else, if the session already has a display_name, keep it.
-    # 4. Otherwise, no display_name is set.
-    if discord_display_name:
+    # Handle display_name logic with precedence:
+    # 1. If discord_display_name is provided, use it.
+    # 2. Else if roblox_display_name is provided, use it.
+    # 3. Else, if a display_name exists in the session from previous data, preserve it.
+    # 4. Otherwise, ensure display_name is explicitly set to None if no new value is provided.
+    if discord_display_display_name is not None:
         session["display_name"] = discord_display_name
-    elif roblox_display_name and "display_name" not in session: # Only set if Discord didn't provide one
+    elif roblox_display_name is not None:
         session["display_name"] = roblox_display_name
+    elif "display_name" not in session: # Only if neither are provided, and not already in session
+        session["display_name"] = None # Explicitly set to None if no display name is available
 
     session["iat"] = time.time()
     

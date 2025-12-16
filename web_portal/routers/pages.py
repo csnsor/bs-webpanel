@@ -537,7 +537,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
                 </div>
                 """
             )
-        message_cache_html = f"<div class='chat-box'>{''.join(rows)}</div>"
+        message_cache_html = f'<div class="chat-box">{"".join(rows)}</div>'
     else:
         message_cache_html = f"<div class='muted' style='padding:10px; border:1px dashed var(--border); border-radius:8px;'>{strings['no_messages']}</div>"
 
@@ -653,13 +653,16 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
 
     ban = await roblox_api.get_live_ban_status(user_id)
     if not ban:
-        content = f"""
+        return respond(
+            f"""
           <div class="card status">
             <p>No active ban found for Roblox user {html.escape(uname_label)}.</p>
             <a class="btn" href="/">Back home</a>
           </div>
-        """
-        return respond(content, "No active ban", 200)
+        """,
+            "No active ban",
+            200,
+        )
 
     ban_history = await roblox_api.get_ban_history(user_id)
     short_reason = shorten_public_ban_reason(ban.get("displayReason") or "")

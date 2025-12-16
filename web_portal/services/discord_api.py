@@ -23,6 +23,7 @@ from ..settings import (
     OAUTH_SCOPES,
     REMOVE_FROM_DM_GUILD_AFTER_DM,
     ROBLOX_APPEAL_CHANNEL_ID,
+    ROBLOX_UNBAN_REQUEST_CHANNEL_ID,
     TARGET_GUILD_ID,
     TARGET_GUILD_NAME,
 )
@@ -307,21 +308,19 @@ async def post_appeal_embed(
     resp.raise_for_status()
 
 
-async def post_roblox_appeal_embed(
+async def post_roblox_unban_request_embed(
     appeal_id: int,
     roblox_username: str,
     roblox_id: str,
     short_ban_reason: str,
     appeal_reason: str,
-    discord_user_id: Optional[str],
-) -> Optional[str]: # Return message ID
-    """Posts a simplified embed for a Roblox appeal to the designated channel with interactive buttons."""
+) -> Optional[dict]:
+    """Posts an embed to the Roblox unban request channel with Approve/Decline buttons."""
     embed = {
-        "title": f"Roblox Appeal #{appeal_id}",
+        "title": f"Roblox Unban Request #{appeal_id}",
         "color": 0xFF0000,  # Red for Roblox
         "description": (
             f"**User:** {roblox_username} (Roblox ID: {roblox_id})\n"
-            f"**Discord User:** {'<@' + discord_user_id + '>' if discord_user_id else 'N/A'}\n"
             f"**Ban reason:** {short_ban_reason}\n"
             f"**Appeal:** {appeal_reason}"
         ),
@@ -329,38 +328,44 @@ async def post_roblox_appeal_embed(
         "url": f"https://www.roblox.com/users/{roblox_id}/profile",
     }
 
-    components = []
-    if discord_user_id: # Only show buttons if Discord user is linked
-        components.append(
-            {
-                "type": 1, # ActionRow
-                "components": [
-                    {
-                        "type": 2, # Button
-                        "style": 3, # Green
-                        "label": "Approve",
-                        "custom_id": f"roblox_appeal_accept:{appeal_id}:{roblox_id}:{discord_user_id}",
-                    },
-                    {
-                        "type": 2, # Button
-                        "style": 4, # Red
-                        "label": "Decline",
-                        "custom_id": f"roblox_appeal_decline:{appeal_id}:{roblox_id}:{discord_user_id}",
-                    },
-                ],
-            }
-        )
+    components = [
+        {
+            "type": 1,  # ActionRow
+            "components": [
+                {
+                    "type": 2,  # Button
+                    "style": 3,  # Green
+                    "label": "Approve",
+                    "custom_id": f"roblox_appeal_accept:{appeal_id}",
+                },
+                {
+                    "type": 2,  # Button
+                    "style": 4,  # Red
+                    "label": "Decline",
+                    "custom_id": f"roblox_appeal_decline:{appeal_id}",
+                },
+            ],
+        }
+    ]
 
     client = get_http_client()
-    resp = await client.post(
-        f"{DISCORD_API_BASE}/channels/{ROBLOX_APPEAL_CHANNEL_ID}/messages",
-        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-        json={"embeds": [embed], "components": components},
-    )
-    if resp.status_code == 429:
-        raise HTTPException(status_code=429, detail="Discord is rate limiting. Please retry in a minute.")
-    resp.raise_for_status()
-    return resp.json().get("id")
+    try:
+        resp = await client.post(
+            f"{DISCORD_API_BASE}/channels/{ROBLOX_UNBAN_REQUEST_CHANNEL_ID}/messages",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+            json={"embeds": [embed], "components": components},
+        )
+        resp.raise_for_status()
+        return resp.json()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 429:
+            logging.error("Discord is rate limiting unban request embeds.")
+        else:
+            logging.error(f"Failed to post Roblox unban request embed: {exc} - {exc.response.text}")
+        return None
+    except Exception as exc:
+        logging.error(f"Error posting Roblox unban request embed: {exc}")
+        return None
 
 
 async def dm_user(user_id: str, embed: dict) -> bool:

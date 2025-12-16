@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
 
 from ..settings import ROBLOX_SUPABASE_TABLE
 from .supabase import is_supabase_ready, supabase_request
@@ -15,11 +16,34 @@ async def upsert_roblox_appeal(
     ban_data: Dict[str, Any],
     short_ban_reason: str,
     discord_user_id: Optional[str] = None,
-    appeal_id: Optional[int] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Inserts a new Roblox appeal or updates an existing one in Supabase.
+    Inserts a new Roblox appeal or updates an existing 'pending' one to prevent duplicates.
+    This is the primary way user appeal submissions are persisted.
     """
+    if not is_supabase_ready():
+        return None
+
+    # Idempotency check: Find an existing *pending* appeal for this Roblox ID
+    try:
+        existing_appeals = await supabase_request(
+            "get",
+            ROBLOX_SUPABASE_TABLE,
+            params={
+                "roblox_id": f"eq.{roblox_id}",
+                "status": "eq.pending",
+                "limit": 1,
+            },
+        )
+        if existing_appeals and isinstance(existing_appeals, list) and len(existing_appeals) > 0:
+            appeal_id = existing_appeals[0]['id']
+            logging.warning(f"Found existing pending appeal {appeal_id} for Roblox ID {roblox_id}. It will be overwritten.")
+        else:
+            appeal_id = None
+    except Exception as exc:
+        logging.error(f"Error checking for existing Roblox appeal for {roblox_id}: {exc}")
+        return None
+
     payload = {
         "roblox_id": roblox_id,
         "roblox_username": roblox_username,
@@ -27,18 +51,26 @@ async def upsert_roblox_appeal(
         "ban_data": ban_data,
         "short_ban_reason": short_ban_reason,
         "discord_user_id": discord_user_id,
+        "status": "pending",  # Always start as pending
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    
+    # If we found an existing appeal, use its ID to update it.
     if appeal_id:
         payload["id"] = appeal_id
+        prefer_header = "resolution=merge-duplicates"
+    else:
+        # This is a new appeal, set created_at
+        payload["created_at"] = datetime.now(timezone.utc).isoformat()
+        prefer_header = "resolution=merge-duplicates"
 
-    # Using 'on_conflict' for upsert based on 'id' if appeal_id is provided,
-    # otherwise it's a regular insert. Supabase's prefer header handles this.
+
     try:
         recs = await supabase_request(
-            "post",
+            "post",  # POST with 'resolution=merge-duplicates' acts as an upsert
             ROBLOX_SUPABASE_TABLE,
             payload=payload,
-            prefer="resolution=merge-duplicates",  # This handles upserting
+            prefer=prefer_header,
         )
         if recs and isinstance(recs, list) and len(recs) > 0:
             return recs[0]
@@ -100,16 +132,18 @@ async def update_roblox_appeal_moderation_status(
 ) -> Optional[Dict[str, Any]]:
     """
     Updates the moderation status and related details of a Roblox appeal.
+    Timestamps are now in ISO 8601 format.
     """
     if not is_supabase_ready():
         return None
 
+    now = datetime.now(timezone.utc).isoformat()
     payload = {
         "status": status,
         "moderator_id": moderator_id,
         "moderator_username": moderator_username,
-        "moderator_action_at": int(time.time()),
-        "updated_at": int(time.time()),  # Manual update for updated_at
+        "moderator_action_at": now,
+        "updated_at": now,
     }
     if discord_message_id:
         payload["discord_message_id"] = discord_message_id
@@ -121,6 +155,7 @@ async def update_roblox_appeal_moderation_status(
         payload["is_active"] = is_active
 
     try:
+        # Use PATCH to update the record identified by its primary key 'id'
         recs = await supabase_request(
             "patch",
             ROBLOX_SUPABASE_TABLE,
@@ -139,33 +174,30 @@ async def get_roblox_appeal_history(
     roblox_id: Optional[str] = None, discord_user_id: Optional[str] = None, limit: int = 25
 ) -> List[Dict[str, Any]]:
     """
-    Retrieves a list of Roblox appeals for a given Roblox ID or Discord user ID.
+    Retrieves a list of Roblox appeals for a given Roblox ID, Discord user ID, or both.
+    If both IDs are provided, it fetches records matching either ID.
     """
-    if not is_supabase_ready():
+    if not is_supabase_ready() or (not roblox_id and not discord_user_id):
         return []
 
+    filters = []
+    if roblox_id:
+        filters.append(f"roblox_id.eq.{roblox_id}")
+    if discord_user_id:
+        filters.append(f"discord_user_id.eq.{discord_user_id}")
+
+    # Join filters with ',' for an 'OR' condition in Supabase
+    or_filter = ",".join(filters)
+    
     params = {
+        "or": f"({or_filter})",
         "order": "created_at.desc",
         "limit": min(limit, 100),
     }
-
-    if roblox_id and discord_user_id:
-        # Supabase doesn't directly support OR in simple params, so we fetch and combine or use 'in' (less ideal for two distinct columns)
-        # For simplicity, let's prioritize roblox_id and then discord_user_id, or consider a single query with 'or' using text search on JSONB or rpc for complex queries.
-        # For now, let's assume one or the other, or if both, roblox_id takes precedence.
-        params["roblox_id"] = f"eq.{roblox_id}"
-        # If we need true OR logic, we'd need to make two requests and merge/deduplicate, or use rpc.
-        # For now, let's just make sure both can be used.
-    elif roblox_id:
-        params["roblox_id"] = f"eq.{roblox_id}"
-    elif discord_user_id:
-        params["discord_user_id"] = f"eq.{discord_user_id}"
-    else:
-        return [] # No identifier provided
 
     try:
         records = await supabase_request("get", ROBLOX_SUPABASE_TABLE, params=params)
         return records if records and isinstance(records, list) else []
     except Exception as exc:
-        logging.error(f"Error getting Roblox appeal history for roblox_id {roblox_id} or discord_user_id {discord_user_id}: {exc}")
+        logging.error(f"Error getting Roblox appeal history for roblox_id={roblox_id}, discord_user_id={discord_user_id}: {exc}")
         return []

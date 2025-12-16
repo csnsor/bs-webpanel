@@ -22,8 +22,10 @@ def persist_user_session(request: Request, response: Response, user_id: str, use
         "uid": user_id,
         "uname": username,
         "iat": time.time(),
-        "display_name": display_name or username
     })
+    if display_name:
+        session["display_name"] = display_name
+    
     token = serializer.dumps(session)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -38,15 +40,15 @@ def persist_user_session(request: Request, response: Response, user_id: str, use
 def persist_roblox_user_session(request: Request, response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> dict:
     session = read_user_session(request) or {}
     
-    # Give preference to existing display name (likely from Discord)
-    new_display_name = session.get("display_name") or display_name or username
-    
     session.update({
         "ruid": user_id,
         "runame": username,
         "iat": time.time(),
-        "display_name": new_display_name
     })
+    
+    if display_name and "display_name" not in session:
+        session["display_name"] = display_name
+
     token = serializer.dumps(session)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,

@@ -15,7 +15,7 @@ from fastapi.security import HTTPBearer
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from ..i18n import detect_language, get_strings, translate_text
-from ..services import appeal_db, roblox_api
+from ..services import appeal_db, roblox_api, bloxlink_api
 from ..services.discord_api import (
     ensure_dm_guild_membership,
     exchange_code_for_token,
@@ -1156,6 +1156,10 @@ async def roblox_submit(
     
     user_session = read_user_session(request)
     discord_user_id = user_session.get("uid") if user_session else None
+
+    # If user is not logged into Discord, try to find their ID via Bloxlink
+    if not discord_user_id:
+        discord_user_id = await bloxlink_api.get_discord_id_from_roblox_id(roblox_user_id)
 
     appeal_record = await appeal_db.upsert_roblox_appeal(
         roblox_id=roblox_user_id,

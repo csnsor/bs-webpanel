@@ -459,3 +459,25 @@ async def edit_discord_message(
         return None
 
 
+async def delete_message(channel_id: str, message_id: str) -> bool:
+    """Deletes a message from a Discord channel."""
+    client = get_http_client()
+    try:
+        resp = await client.delete(
+            f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}",
+            headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        )
+        resp.raise_for_status()
+        logging.info(f"Successfully deleted message {message_id} from channel {channel_id}.")
+        return True
+    except httpx.HTTPStatusError as exc:
+        # If the message is already gone, that's a success in our book.
+        if exc.response.status_code == 404:
+            logging.info(f"Attempted to delete message {message_id} but it was already gone.")
+            return True
+        logging.error(f"Failed to delete message {message_id}: {exc.response.status_code} - {exc.response.text}")
+        return False
+    except Exception as exc:
+        logging.exception(f"An unexpected error occurred while deleting message {message_id}: {exc}")
+        return False
+

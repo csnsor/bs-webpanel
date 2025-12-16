@@ -16,7 +16,7 @@ from ..services.discord_api import (
     post_roblox_final_appeal_embed,
     remove_from_target_guild,
     unban_user_from_guild,
-    delete_message, # Import delete_message
+    delete_message,
 )
 from ..services.interactions import respond_ephemeral_embed, update_message, verify_signature
 from ..services.supabase import fetch_appeal_record, update_appeal_status

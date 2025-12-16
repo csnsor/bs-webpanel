@@ -218,7 +218,11 @@ class AuthService:
         current_lang = normalize_language(lang or state_data.get("lang"))
         
         token = await roblox_api.exchange_code_for_token(code)
-        user = await roblox_api.get_user_info(token["access_token"])
+        try:
+            user = await roblox_api.get_user_info(token["access_token"])
+        except httpx.HTTPStatusError as exc:
+            logger.warning(f"Roblox user info fetch failed: {exc} | body={exc.response.text}")
+            raise HTTPException(status_code=422, detail="Failed to retrieve Roblox user information. The provided code might be invalid or expired. Please try again.") from exc
         user_id = user["sub"]
         
         # Now that we have the user_id, we can properly store the token
@@ -1038,9 +1042,10 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     
     # Check if a Roblox session already exists
     roblox_session = read_user_session(request)
+    logging.info(f"Discord callback: Current session in request: {roblox_session}")
     if roblox_session and "ruid" in roblox_session:
         # The user is already in a Roblox appeal flow, just link the Discord account
-        response = RedirectResponse("/oauth/roblox/callback")
+        response = RedirectResponse("/status")
         persist_user_session(request, response, user["id"], uname_label, display_name=display_name)
         return response
 

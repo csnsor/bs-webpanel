@@ -147,31 +147,17 @@ def build_user_chip(
 
     buttons = []
 
+    if name:
+        buttons.append(f"<span class='greeting'>Hi, {html.escape(name)}</span>")
+
     if has_discord and has_roblox:
-        buttons.append(f"<span class='greeting'>Hi, {html.escape(name)}</span>")
         buttons.append("<a class='btn btn--primary' href='/status'>Appeal Status</a>")
-        buttons.append("<a class='btn btn--ghost' href='/logout'>Logout</a>")
-    elif has_discord:
-        buttons.append(f"<span class='greeting'>Hi, {html.escape(name)}</span>")
-        if roblox_login_url:
-            buttons.append(f"<a class='btn btn--roblox' href='{html.escape(roblox_login_url)}'>Link Roblox</a>")
-        buttons.append("<a class='btn btn--ghost' href='/logout'>Logout</a>")
-    elif has_roblox:
-        buttons.append(f"<span class='greeting'>Hi, {html.escape(name)}</span>")
-        if discord_login_url:
-            buttons.append(f"<a class='btn btn--discord' href='{html.escape(discord_login_url)}'>Link Discord</a>")
-        buttons.append("<a class='btn btn--ghost' href='/logout'>Logout</a>")
-    else: # Should not happen if session exists, but as a fallback
-        return f"""
-          <div class="top__actions">
-            <a class="btn btn--discord" href="{html.escape(discord_login_url or '#')}" aria-label="Sign in with Discord">
-              Sign in with Discord
-            </a>
-            <a class="btn btn--roblox" href="{html.escape(roblox_login_url or '#')}" aria-label="Sign in with Roblox">
-              Sign in with Roblox
-            </a>
-          </div>
-        """
+    elif has_discord and roblox_login_url:
+        buttons.append(f"<a class='btn btn--roblox' href='{html.escape(roblox_login_url)}'>Link Roblox</a>")
+    elif has_roblox and discord_login_url:
+        buttons.append(f"<a class='btn btn--discord' href='{html.escape(discord_login_url)}'>Link Discord</a>")
+        
+    buttons.append("<a class='btn btn--ghost' href='/logout'>Logout</a>")
 
     return f'<div class="top__actions">{" ".join(buttons)}</div>'
 

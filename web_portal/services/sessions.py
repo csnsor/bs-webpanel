@@ -10,7 +10,8 @@ from starlette.responses import Response
 
 from ..settings import PERSIST_SESSION_SECONDS, SECRET_KEY, SESSION_COOKIE_NAME
 from ..utils import clean_display_name
-from .discord_api import fetch_discord_user, get_valid_access_token
+from .discord_api import fetch_discord_user, get_valid_access_token as get_valid_discord_token
+from .roblox_api import get_user_info as get_roblox_user_info, get_valid_access_token as get_valid_roblox_token
 
 serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 
@@ -18,7 +19,6 @@ serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 def persist_user_session(request: Request, response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> dict:
     session = read_user_session(request) or {}
     session.update({
-        "type": "discord",
         "uid": user_id,
         "uname": username,
         "iat": time.time(),
@@ -38,7 +38,6 @@ def persist_user_session(request: Request, response: Response, user_id: str, use
 def persist_roblox_user_session(request: Request, response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> dict:
     session = read_user_session(request) or {}
     session.update({
-        "type": "roblox",
         "ruid": user_id,
         "runame": username,
         "iat": time.time(),
@@ -58,22 +57,15 @@ def persist_roblox_user_session(request: Request, response: Response, user_id: s
 
 def maybe_persist_session(request: Request, response: Response, session: Optional[dict], refreshed: bool) -> None:
     if session and refreshed:
-        if session.get("type") == "discord":
-            persist_user_session(
-                request,
-                response,
-                session["uid"],
-                session.get("uname") or "",
-                display_name=session.get("display_name"),
-            )
-        elif session.get("type") == "roblox":
-             persist_roblox_user_session(
-                request,
-                response,
-                session["ruid"],
-                session.get("runame") or "",
-                display_name=session.get("display_name"),
-            )
+        token = serializer.dumps(session)
+        response.set_cookie(
+            key=SESSION_COOKIE_NAME,
+            value=token,
+            max_age=PERSIST_SESSION_SECONDS,
+            secure=True,
+            httponly=True,
+            samesite="Lax",
+        )
 
 
 def read_user_session(request: Request) -> Optional[dict]:
@@ -93,31 +85,44 @@ async def refresh_session_profile(session: Optional[dict]) -> Tuple[Optional[dic
     if not session:
         return None, False
 
-    # Handle Discord session refresh
-    if session.get("type") == "discord":
-        user_id = session.get("uid")
-        if not user_id:
-            return session, False
-        token = await get_valid_access_token(str(user_id))
-        if not token:
-            return session, False
-        try:
-            user = await fetch_discord_user(token)
-            uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
-            display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
-            updated = dict(session)
-            updated["uname"] = uname_label
-            updated["display_name"] = display_name
-            updated["iat"] = time.time()
-            return updated, True
-        except Exception as exc:
-            logging.debug("Discord profile refresh failed for %s: %s", user_id, exc)
-            return session, False
+    updated = dict(session)
+    refreshed = False
 
-    # Placeholder for Roblox session refresh
-    if session.get("type") == "roblox":
-        # Roblox token refresh logic would go here if implemented
-        return session, False
+    # Handle Discord session refresh
+    if "uid" in updated:
+        user_id = updated["uid"]
+        token = await get_valid_discord_token(str(user_id))
+        if token:
+            try:
+                user = await fetch_discord_user(token)
+                uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
+                display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
+                updated["uname"] = uname_label
+                updated["display_name"] = display_name
+                refreshed = True
+            except Exception as exc:
+                logging.debug("Discord profile refresh failed for %s: %s", user_id, exc)
+
+    # Handle Roblox session refresh
+    if "ruid" in updated:
+        user_id = updated["ruid"]
+        token = await get_valid_roblox_token(str(user_id))
+        if token:
+            try:
+                user = await get_roblox_user_info(token)
+                uname_label = user.get("name") or user.get("preferred_username")
+                display_name = clean_display_name(user.get("nickname") or uname_label)
+                updated["runame"] = uname_label
+                # Give preference to Discord display name if available
+                if "display_name" not in updated:
+                    updated["display_name"] = display_name
+                refreshed = True
+            except Exception as exc:
+                logging.debug("Roblox profile refresh failed for %s: %s", user_id, exc)
+    
+    if refreshed:
+        updated["iat"] = time.time()
+        return updated, True
 
     return session, False
 

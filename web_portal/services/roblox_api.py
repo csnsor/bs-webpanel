@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -15,8 +17,10 @@ from ..settings import (
     ROBLOX_CLIENT_ID,
     ROBLOX_CLIENT_SECRET,
     ROBLOX_OAUTH_SCOPES,
+    ROBLOX_OAUTH_TOKENS_TABLE,
     ROBLOX_REDIRECT_URI,
 )
+from .supabase import supabase_request
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +58,70 @@ async def exchange_code_for_token(code: str) -> dict:
     except httpx.HTTPStatusError as exc:
         logger.warning("Roblox OAuth code exchange failed: %s | body=%s", exc, exc.response.text)
         raise HTTPException(status_code=400, detail="Roblox authentication failed. Please try again.") from exc
+
+
+async def refresh_roblox_token(user_id: str, refresh_token: str) -> Optional[dict]:
+    """Refreshes a Roblox access token using a refresh token."""
+    try:
+        client = get_http_client()
+        auth_header = base64.b64encode(f"{ROBLOX_CLIENT_ID}:{ROBLOX_CLIENT_SECRET}".encode()).decode()
+        resp = await client.post(
+            f"{ROBLOX_API_BASE}/oauth/v1/token",
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Authorization": f"Basic {auth_header}",
+            },
+        )
+        resp.raise_for_status()
+        new_token_data = resp.json()
+        await store_roblox_token(user_id, new_token_data)
+        return new_token_data
+    except httpx.HTTPStatusError as exc:
+        logger.warning(f"Failed to refresh Roblox token for user {user_id}: {exc.response.status_code} {exc.response.text}")
+        return None
+
+
+async def store_roblox_token(user_id: str, token_data: dict):
+    """Stores a Roblox token in the database."""
+    expires_in = token_data.get("expires_in", 0)
+    payload = {
+        "roblox_id": user_id,
+        "access_token": token_data["access_token"],
+        "refresh_token": token_data["refresh_token"],
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await supabase_request(ROBLOX_OAUTH_TOKENS_TABLE, "post", payload=payload, prefer="resolution=merge-duplicates")
+
+    
+async def get_valid_access_token(user_id: str) -> Optional[str]:
+    """Retrieves a valid access token for a Roblox user, refreshing if necessary."""
+    try:
+        records = await supabase_request(
+            "get",
+            ROBLOX_OAUTH_TOKENS_TABLE,
+            params={"roblox_id": f"eq.{user_id}", "limit": 1},
+        )
+        if not records:
+            return None
+        
+        token_data = records[0]
+        expires_at = datetime.fromisoformat(token_data["expires_at"])
+
+        if expires_at > datetime.now(timezone.utc) + timedelta(minutes=5):
+            return token_data["access_token"]
+        
+        refreshed_token = await refresh_roblox_token(user_id, token_data["refresh_token"])
+        return refreshed_token.get("access_token") if refreshed_token else None
+
+    except Exception as e:
+        logger.exception(f"Error getting valid Roblox access token for {user_id}: {e}")
+        return None
+
 
 
 async def get_user_info(access_token: str) -> dict:

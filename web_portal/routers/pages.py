@@ -219,9 +219,13 @@ class AuthService:
         
         token = await roblox_api.exchange_code_for_token(code)
         user = await roblox_api.get_user_info(token["access_token"])
+        user_id = user["sub"]
         
+        # Now that we have the user_id, we can properly store the token
+        await roblox_api.store_roblox_token(user_id, token)
+
         ip = get_client_ip(request)
-        asyncio.create_task(send_log_message(f"[auth_roblox] user={user['sub']} ip_hash={hash_ip(ip)} lang={current_lang}"))
+        asyncio.create_task(send_log_message(f"[auth_roblox] user={user_id} ip_hash={hash_ip(ip)} lang={current_lang}"))
         
         return {
             "user": user,

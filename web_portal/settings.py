@@ -44,6 +44,7 @@ ROBLOX_BAN_API_KEY = os.getenv("ROBLOX_BAN_API_KEY")
 ROBLOX_BAN_API_URL = os.getenv("ROBLOX_BAN_API_URL", "https://apis.roblox.com/cloud/v2/universes/6765805766/user-restrictions")  # The base URL for the ban/restriction API
 ROBLOX_APPEAL_CHANNEL_ID = int(os.getenv("ROBLOX_APPEAL_CHANNEL_ID", "1352973388334764112"))
 ROBLOX_SUPABASE_TABLE = "roblox_appeals"
+ROBLOX_OAUTH_TOKENS_TABLE = "roblox_oauth_tokens"
 
 # Bloxlink settings
 BLOXLINK_API_KEY = os.getenv("BLOXLINK_API_KEY")

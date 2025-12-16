@@ -37,11 +37,15 @@ def persist_user_session(request: Request, response: Response, user_id: str, use
 
 def persist_roblox_user_session(request: Request, response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> dict:
     session = read_user_session(request) or {}
+    
+    # Give preference to existing display name (likely from Discord)
+    new_display_name = session.get("display_name") or display_name or username
+    
     session.update({
         "ruid": user_id,
         "runame": username,
         "iat": time.time(),
-        "display_name": display_name or username
+        "display_name": new_display_name
     })
     token = serializer.dumps(session)
     response.set_cookie(

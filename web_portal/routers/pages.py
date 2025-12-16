@@ -537,7 +537,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
                 </div>
                 """
             )
-        message_cache_html = f"<div class='chat-box">{''.join(rows)}</div>"
+        message_cache_html = f"<div class='chat-box'>{''.join(rows)}</div>"
     else:
         message_cache_html = f"<div class='muted' style='padding:10px; border:1px dashed var(--border); border-radius:8px;'>{strings['no_messages']}</div>"
 

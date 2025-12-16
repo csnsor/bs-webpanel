@@ -15,14 +15,16 @@ from .discord_api import fetch_discord_user, get_valid_access_token
 serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 
 
-def persist_user_session(response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> None:
-    token = serializer.dumps({
+def persist_user_session(request: Request, response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> dict:
+    session = read_user_session(request) or {}
+    session.update({
         "type": "discord",
         "uid": user_id,
         "uname": username,
         "iat": time.time(),
         "display_name": display_name or username
     })
+    token = serializer.dumps(session)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
@@ -31,16 +33,18 @@ def persist_user_session(response: Response, user_id: str, username: str, displa
         httponly=True,
         samesite="Lax",
     )
+    return session
 
-
-def persist_roblox_user_session(response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> None:
-    token = serializer.dumps({
+def persist_roblox_user_session(request: Request, response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> dict:
+    session = read_user_session(request) or {}
+    session.update({
         "type": "roblox",
         "ruid": user_id,
         "runame": username,
         "iat": time.time(),
         "display_name": display_name or username
     })
+    token = serializer.dumps(session)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
@@ -49,20 +53,22 @@ def persist_roblox_user_session(response: Response, user_id: str, username: str,
         httponly=True,
         samesite="Lax",
     )
+    return session
 
 
-def maybe_persist_session(response: Response, session: Optional[dict], refreshed: bool) -> None:
+def maybe_persist_session(request: Request, response: Response, session: Optional[dict], refreshed: bool) -> None:
     if session and refreshed:
         if session.get("type") == "discord":
             persist_user_session(
+                request,
                 response,
                 session["uid"],
                 session.get("uname") or "",
                 display_name=session.get("display_name"),
             )
-        # Note: Roblox session refresh is not implemented yet
         elif session.get("type") == "roblox":
              persist_roblox_user_session(
+                request,
                 response,
                 session["ruid"],
                 session.get("runame") or "",

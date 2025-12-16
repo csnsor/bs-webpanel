@@ -271,7 +271,7 @@ class PageRenderer:
             render_page("BlockSpin — Appeals", content, lang=current_lang, strings=strings), 
             headers={"Cache-Control": "no-store"}
         )
-        maybe_persist_session(response, user_session, session_refreshed)
+        maybe_persist_session(request, response, user_session, session_refreshed)
         response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return response
     
@@ -562,7 +562,7 @@ class PageRenderer:
             render_page("Appeal status", content, lang=current_lang, strings=strings), 
             headers={"Cache-Control": "no-store"}
         )
-        maybe_persist_session(resp, session, session_refreshed)
+        maybe_persist_session(request, resp, session, session_refreshed)
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
     
@@ -696,7 +696,7 @@ class PageRenderer:
             status_code=200, 
             headers={"Cache-Control": "no-store"}
         )
-        persist_user_session(resp, user["id"], uname_label, display_name=display_name)
+        persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
     
@@ -719,12 +719,28 @@ class PageRenderer:
         
         ban_reason = html.escape(short_reason)
         user_id_label = html.escape(str(user_id))
+
+        discord_notice = ""
+        session = read_user_session(request)
+        if not session or not session.get("uid"):
+            ip = get_client_ip(request)
+            state_token = issue_state_token(ip)
+            state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
+            discord_login_url = discord_oauth_authorize_url(state)
+            discord_notice = f"""
+            <div class="callout callout--warn">
+                <p><strong>Want updates on your appeal?</strong></p>
+                <p>Sign in with Discord to receive status updates via DM.</p>
+                <a class="btn btn--discord" href="{html.escape(discord_login_url)}">Connect Discord</a>
+            </div>
+            """
         
         content = f"""
           <div class="grid-2">
             <div class="form-card">
               <h2 style="margin:8px 0;">Appeal your Roblox Ban</h2>
               <p class="muted">One appeal per ban. Be clear and concise.</p>
+              {discord_notice}
               <form class="form" action="/roblox/submit" method="post">
                 <input type="hidden" name="session" value="{html.escape(session_token)}" />
                 <div class="field">
@@ -754,7 +770,7 @@ class PageRenderer:
             status_code=200, 
             headers={"Cache-Control": "no-store"}
         )
-        persist_roblox_user_session(resp, user_id, uname_label, display_name=display_name)
+        persist_roblox_user_session(request, resp, user_id, uname_label, display_name=display_name)
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
 
@@ -891,7 +907,7 @@ async def status_page(request: Request, lang: Optional[str] = None):
     """
     
     resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
-    maybe_persist_session(resp, session, session_refreshed)
+    maybe_persist_session(request, resp, session, session_refreshed)
     resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
     return resp
 

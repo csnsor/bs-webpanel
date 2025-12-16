@@ -16,39 +16,38 @@ from .roblox_api import get_user_info as get_roblox_user_info, get_valid_access_
 serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 
 
-def persist_user_session(request: Request, response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> dict:
-    session = read_user_session(request) or {}
-    session.update({
-        "uid": user_id,
-        "uname": username,
-        "iat": time.time(),
-    })
-    if display_name:
-        session["display_name"] = display_name
-    
-    token = serializer.dumps(session)
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=token,
-        max_age=PERSIST_SESSION_SECONDS,
-        secure=True,
-        httponly=True,
-        samesite="Lax",
-    )
-    return session
-
-def persist_roblox_user_session(request: Request, response: Response, user_id: str, username: str, display_name: Optional[str] = None) -> dict:
+def persist_session(
+    request: Request,
+    response: Response,
+    discord_user_id: Optional[str] = None,
+    discord_username: Optional[str] = None,
+    discord_display_name: Optional[str] = None,
+    roblox_user_id: Optional[str] = None,
+    roblox_username: Optional[str] = None,
+    roblox_display_name: Optional[str] = None,
+) -> dict:
     session = read_user_session(request) or {}
     
-    session.update({
-        "ruid": user_id,
-        "runame": username,
-        "iat": time.time(),
-    })
+    if discord_user_id:
+        session["uid"] = discord_user_id
+        session["uname"] = discord_username
     
-    if display_name and "display_name" not in session:
-        session["display_name"] = display_name
+    if roblox_user_id:
+        session["ruid"] = roblox_user_id
+        session["runame"] = roblox_username
+    
+    # Handle display_name logic:
+    # 1. If a discord_display_name is provided, use it.
+    # 2. Else if a roblox_display_name is provided, use it.
+    # 3. Else, if the session already has a display_name, keep it.
+    # 4. Otherwise, no display_name is set.
+    if discord_display_name:
+        session["display_name"] = discord_display_name
+    elif roblox_display_name and "display_name" not in session: # Only set if Discord didn't provide one
+        session["display_name"] = roblox_display_name
 
+    session["iat"] = time.time()
+    
     token = serializer.dumps(session)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -72,6 +71,7 @@ def maybe_persist_session(request: Request, response: Response, session: Optiona
             httponly=True,
             samesite="Lax",
         )
+
 
 
 def read_user_session(request: Request) -> Optional[dict]:

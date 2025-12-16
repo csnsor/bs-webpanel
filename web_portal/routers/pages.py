@@ -32,8 +32,7 @@ from ..services.message_cache import fetch_message_cache
 from ..services.security import enforce_ip_rate_limit, issue_state_token, validate_state_token
 from ..services.sessions import (
     maybe_persist_session,
-    persist_roblox_user_session,
-    persist_user_session,
+    persist_session,
     read_user_session,
     refresh_session_profile,
     serializer,
@@ -300,14 +299,29 @@ class PageRenderer:
 
         # Action buttons in the hero section
         hero_actions = []
-        if not has_discord:
+        if has_discord and has_roblox:
+            # Both linked, no appeal needed here.
+            pass
+        elif has_discord:
             hero_actions.append(f"""
                 <a class="btn btn--primary" href="{html.escape(discord_login_url)}" aria-label="Appeal with Discord">
                     Appeal with Discord
                 </a>
             """)
-        if not has_roblox:
-             hero_actions.append(f"""
+        elif has_roblox:
+            hero_actions.append(f"""
+                <a class="btn btn--primary" href="{html.escape(roblox_login_url)}" aria-label="Appeal with Roblox">
+                    Appeal with Roblox
+                </a>
+            """)
+        else:
+            # Neither linked, show both options
+            hero_actions.append(f"""
+                <a class="btn btn--primary" href="{html.escape(discord_login_url)}" aria-label="Appeal with Discord">
+                    Appeal with Discord
+                </a>
+            """)
+            hero_actions.append(f"""
                 <a class="btn btn--soft" href="{html.escape(roblox_login_url)}" aria-label="Appeal with Roblox">
                     Appeal with Roblox
                 </a>
@@ -318,14 +332,27 @@ class PageRenderer:
 
         # Action buttons in the side panel
         panel_actions = []
-        if not has_discord:
+        if not has_discord and has_roblox:
+             # Roblox is linked, but Discord is not. Prompt to connect Discord.
+            panel_actions.append(
+                f'<p class="muted">To see your full appeal history, connect your Discord account.</p>'
+                f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Connect Discord</a>'
+            )
+        elif has_discord and not has_roblox:
+            # Discord is linked, but Roblox is not. Prompt to connect Roblox.
+            panel_actions.append(
+                f'<p class="muted">To see your full appeal history, connect your Roblox account.</p>'
+                f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Connect Roblox</a>'
+            )
+        elif not has_discord:
             panel_actions.append(
                 f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Continue with Discord</a>'
             )
-        if not has_roblox:
-            panel_actions.append(
-                f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Continue with Roblox</a>'
-            )
+        if not has_roblox: # This 'if' should be separate if we want both options when neither are linked
+            if not has_discord: # Only show Roblox option if Discord is also not linked initially
+                panel_actions.append(
+                    f'<a class="btn btn--soft btn--wide" href="{html.escape(roblox_login_url)}">Continue with Roblox</a>'
+                )
 
         if not panel_actions:
             panel_actions.append('<p class="muted">You are signed into both platforms.</p><a class="btn btn--soft btn--wide" href="/status">Check Appeal Status</a>')
@@ -686,12 +713,34 @@ class PageRenderer:
           </script>
         """
         
+        roblox_notice = ""
+        session = read_user_session(request)
+        if not session or not session.get("ruid"):
+            ip = get_client_ip(request)
+            state_token = issue_state_token(ip)
+            state = serializer.dumps({
+                "nonce": secrets.token_urlsafe(8), 
+                "lang": current_lang, 
+                "state_id": state_token,
+                "context": "discord_appeal", # Context for Roblox callback
+                "discord_user_id": user["id"]
+            })
+            roblox_login_url = roblox_api.oauth_authorize_url(state)
+            roblox_notice = f"""
+            <div class="callout callout--warn">
+                <p><strong>Want updates on your appeal?</strong></p>
+                <p>Connect your Roblox account to view combined appeal history and updates via the web portal.</p>
+                <a class="btn btn--roblox" href="{html.escape(roblox_login_url)}">Connect Roblox</a>
+            </div>
+            """
+        
         content = f"""
           <div class="grid-2">
             <div class="form-card">
               <div class="badge">Window remaining: <span id="appealWindowRemaining" data-expires="{int(window_expires_at)}"></span></div>
               <h2 style="margin:8px 0;">Appeal your BlockSpin ban</h2>
               <p class="muted">One appeal per ban. Include context, evidence, and what you will change.</p>
+              {roblox_notice}
               <form class="form" action="/submit" method="post">
                 <input type="hidden" name="session" value="{html.escape(session_token)}" />
                 <div class="field">
@@ -963,7 +1012,37 @@ async def status_page(request: Request, lang: Optional[str] = None):
           <h1>Appeal history for {display_name}</h1>
           <p class="muted">Monitor decisions and peer context for your ban reviews.</p>
         </div>
-        {history_html}
+    """
+
+    linking_prompt = ""
+    if not session.get("uid") and session.get("ruid"):
+        # Roblox linked, Discord not
+        state_token = issue_state_token(ip)
+        state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
+        discord_login_url = discord_oauth_authorize_url(state)
+        linking_prompt = f"""
+            <div class="callout callout--info" style="margin-bottom: 20px;">
+                <p><strong>Connect your Discord account to see your full appeal history!</strong></p>
+                <p>Link your Discord account to view combined appeals and receive updates via DM.</p>
+                <a class="btn btn--discord" href="{html.escape(discord_login_url)}">Connect Discord</a>
+            </div>
+        """
+    elif session.get("uid") and not session.get("ruid"):
+        # Discord linked, Roblox not
+        state_token = issue_state_token(ip)
+        state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
+        roblox_login_url = roblox_api.oauth_authorize_url(state)
+        linking_prompt = f"""
+            <div class="callout callout--info" style="margin-bottom: 20px;">
+                <p><strong>Connect your Roblox account to see your full appeal history!</strong></p>
+                <p>Link your Roblox account to view combined appeals and ensure all your appeals are visible.</p>
+                <a class="btn btn--roblox" href="{html.escape(roblox_login_url)}">Connect Roblox</a>
+            </div>
+        """
+    
+    content += linking_prompt
+    content += history_html
+    content += f"""
         <div class="btn-row" style="margin-top:10px;">
           <a class="btn secondary" href="/">Back home</a>
         </div>
@@ -1067,34 +1146,36 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         ban_history = await roblox_api.get_ban_history(roblox_user_id)
         short_reason = shorten_public_ban_reason(ban.get("displayReason") or "")
 
-        # Create a new session token, now including the Discord UID
-        session_token = serializer.dumps({
-            "ruid": roblox_user_id,
-            "runame": roblox_uname_label,
-            "ban_data": ban,
-            "ban_reason_short": short_reason,
-            "ban_history": ban_history,
-            "iat": time.time(),
-            "lang": current_lang,
-            "uid": user["id"], # Include Discord UID
-            "uname": uname_label, # Include Discord username
-            "display_name": display_name # Include Discord display name
-        })
-
-        # Render the Roblox appeal page, with the Discord account now linked
-        resp = await PageRenderer.render_roblox_appeal_page(
-            request, {"sub": roblox_user_id, "name": roblox_uname_label, "nickname": roblox_display_name}, ban, session_token, current_lang, strings
-        )
+        # Create a response object first for cookie setting
+        response = RedirectResponse("/status")
+        
         # Ensure both Discord and Roblox sessions are persisted
-        persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
-        persist_roblox_user_session(request, resp, roblox_user_id, roblox_uname_label, display_name=roblox_display_name)
-        return resp
+        persist_session(
+            request, response,
+            discord_user_id=user["id"],
+            discord_username=uname_label,
+            discord_display_name=display_name,
+            roblox_user_id=roblox_user_id,
+            roblox_username=roblox_uname_label,
+            roblox_display_name=roblox_display_name
+        )
+        return response
 
 
     # Check if user is eligible to appeal
     ban = await fetch_ban_if_exists(user["id"])
     eligible, reason = await AppealService.check_appeal_eligibility(user["id"], ban)
     
+    # Create a response object first for cookie setting
+    response = HTMLResponse(status_code=200) # Default, will be updated by render_page
+    
+    persist_session(
+        request, response,
+        discord_user_id=user["id"],
+        discord_username=uname_label,
+        discord_display_name=display_name
+    )
+
     if not eligible:
         if reason == "Appeal declined":
             content = f"""
@@ -1104,28 +1185,23 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
                 <a class="btn" href="/">Return home</a>
               </div>
             """
-            resp = HTMLResponse(
-                render_page("Appeal declined", content, lang=current_lang, strings=strings), 
-                status_code=403, 
-                headers={"Cache-Control": "no-store"}
-            )
-            persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
-            return resp
+            response.status_code = 403
+            response.body = render_page("Appeal declined", content, lang=current_lang, strings=strings)
+            return response
 
         elif reason == "No active ban":
-            content = f"""
-              <div class="card status">
-                <p>No active ban found for {html.escape(user['username'])}#{html.escape(user.get('discriminator','0'))}.</p>
-                <a class="btn" href="/">Back home</a>
-              </div>
-            """
-            resp = HTMLResponse(
-                render_page("No active ban", content, lang=current_lang, strings=strings), 
-                status_code=200, 
-                headers={"Cache-Control": "no-store"}
-            )
-            persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
-            return resp
+            # Situation 4: Discord NOT banned, Roblox NOT banned
+            # User logs in with Discord, but not banned. Check if Roblox is linked.
+            # If Roblox is linked, go to status page. If not, go to home with options to link.
+            current_session = read_user_session(request)
+            if current_session and current_session.get("ruid"):
+                response = RedirectResponse("/status")
+                # Session already persisted by persist_session call above
+                return response
+            else:
+                response = RedirectResponse("/")
+                # Session already persisted by persist_session call above
+                return response
         
         elif reason == "Appeal window closed":
             content = f"""
@@ -1137,13 +1213,9 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
               </div>
               <div class="actions"><a class="btn secondary" href="/">Return home</a></div>
             """
-            resp = HTMLResponse(
-                render_page("Appeal window closed", content, lang=current_lang, strings=strings), 
-                status_code=403, 
-                headers={"Cache-Control": "no-store"}
-            )
-            persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
-            return resp
+            response.status_code = 403
+            response.body = render_page("Appeal window closed", content, lang=current_lang, strings=strings)
+            return response
         
         elif reason == "Appeal already submitted":
             content = f"""
@@ -1155,13 +1227,9 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
               </div>
               <div class="actions"><a class="btn secondary" href="/">Return home</a></div>
             """
-            resp = HTMLResponse(
-                render_page("Appeal already submitted", content, lang=current_lang, strings=strings), 
-                status_code=409, 
-                headers={"Cache-Control": "no-store"}
-            )
-            persist_user_session(request, resp, user["id"], uname_label, display_name=display_name)
-            return resp
+            response.status_code = 409
+            response.body = render_page("Appeal already submitted", content, lang=current_lang, strings=strings)
+            return response
     
     # Ensure user is in DM guild
     await ensure_dm_guild_membership(user["id"])
@@ -1217,7 +1285,8 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
     auth_data = await AuthService.handle_roblox_callback(request, code, state, lang)
     user = auth_data["user"]
     current_lang = auth_data["lang"]
-    ip = auth_data["ip"]
+    state_data = auth_data["state_data"]
+
     
     strings = await get_strings(current_lang)
     strings = dict(strings)
@@ -1226,24 +1295,92 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
     uname_label = user.get("name") or user.get("preferred_username")
     display_name = clean_display_name(user.get("nickname") or uname_label)
     
+    # Create a response object first for cookie setting
+    response = HTMLResponse(status_code=200) # Default, will be updated by render_page
+
+    # Read existing session to check for Discord info
+    existing_session = read_user_session(request)
+    discord_user_id = existing_session.get("uid")
+    discord_username = existing_session.get("uname")
+    discord_display_name = existing_session.get("display_name")
+    
+    # If Roblox callback comes from a Discord appeal context
+    if state_data.get("context") == "discord_appeal" and state_data.get("discord_user_id"):
+        discord_user_id = str(state_data["discord_user_id"])
+        # Attempt to get full Discord user info if needed, otherwise use current session
+        if not discord_username:
+            # We don't have the token here, so can't fetch full discord user by id directly.
+            # We'll rely on the existing session or only use the ID for linking.
+            pass # Keep existing logic for fetching from session
+        
+        # Persist the combined session immediately
+        persist_session(
+            request, response,
+            discord_user_id=discord_user_id,
+            discord_username=discord_username, # Use existing or default
+            discord_display_name=discord_display_name, # Use existing or default
+            roblox_user_id=user_id,
+            roblox_username=uname_label,
+            roblox_display_name=display_name
+        )
+
+        # Check if Roblox user has an active ban
+        ban = await roblox_api.get_live_ban_status(user_id)
+        if not ban:
+            # If Roblox user is not banned, redirect to Discord appeal page as primary
+            # The session is now linked, but Roblox ban is not active for appeal.
+            # We should probably redirect to the Discord appeal page if there is an active Discord ban,
+            # or to the status page otherwise.
+            # For now, let's redirect to status page for a general overview after linking.
+            response = RedirectResponse("/status")
+            return response
+
+        # Create session token for the Roblox appeal page, now with combined user data
+        ban_history = await roblox_api.get_ban_history(user_id)
+        short_reason = shorten_public_ban_reason(ban.get("displayReason") or "")
+        
+        session_token = serializer.dumps({
+            "ruid": user_id,
+            "runame": uname_label,
+            "ban_data": ban,
+            "ban_reason_short": short_reason,
+            "ban_history": ban_history,
+            "iat": time.time(),
+            "lang": current_lang,
+            "uid": discord_user_id, # Include Discord UID
+            "uname": discord_username, # Include Discord username
+            "display_name": discord_display_name # Include Discord display name
+        })
+        
+        return await PageRenderer.render_roblox_appeal_page(
+            request, user, ban, session_token, current_lang, strings
+        )
+
+    # Original logic for Roblox-first login or no specific context
+    persist_session(
+        request, response,
+        discord_user_id=discord_user_id,
+        discord_username=discord_username,
+        discord_display_name=discord_display_name,
+        roblox_user_id=user_id,
+        roblox_username=uname_label,
+        roblox_display_name=display_name
+    )
+
     # Check if user has an active ban
     ban = await roblox_api.get_live_ban_status(user_id)
     if not ban:
-        content = f"""
-          <div class="card status">
-            <p>No active ban found for Roblox user {html.escape(uname_label)}.</p>
-            <a class="btn" href="/">Back home</a>
-          </div>
-        """
-        resp = HTMLResponse(
-            render_page("No active ban", content, lang=current_lang, strings=strings), 
-            status_code=200, 
-            headers={"Cache-Control": "no-store"}
-        )
-        persist_roblox_user_session(request, resp, user_id, uname_label, display_name=display_name)
-        return resp
+        # Situation 4: Discord NOT banned, Roblox NOT banned
+        # User logs in with Roblox, but not banned. Check if Discord is linked.
+        # If Discord is linked, go to status page. If not, go to home with options to link.
+        if existing_session and existing_session.get("uid"):
+            response = RedirectResponse("/status")
+            return response
+        else:
+            response = RedirectResponse("/")
+            return response
     
-    # Create session token
+    # Create session token (This is still needed for the appeal form data)
     ban_history = await roblox_api.get_ban_history(user_id)
     short_reason = shorten_public_ban_reason(ban.get("displayReason") or "")
     

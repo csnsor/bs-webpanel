@@ -199,7 +199,7 @@ async def home(request: Request, lang: Optional[str] = None):
         </div>
       </article>
     </section>
-    """
+    "
 
     strings["script_nonce"] = secrets.token_urlsafe(12)
     strings["script_block"] = """
@@ -215,7 +215,7 @@ async def home(request: Request, lang: Optional[str] = None):
         signalChip: document.getElementById("signalChip"),
       };
 
-      function esc(s){ return String(s ?? "").replace(/[&<>'"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',''':'&#39;'}[m])); }
+      function esc(s){ return String(s ?? "").replace(/[&<>"'\/]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;','/':'&#x2F;'}[m])); }
       function statusClass(status){
         const t = String(status || "pending").toLowerCase();
         if (t.startsWith("accept")) return "ok";
@@ -301,7 +301,7 @@ async def home(request: Request, lang: Optional[str] = None):
       tick();
       setInterval(tick, 15000);
     })();
-    """
+    ""
 
     response = HTMLResponse(render_page("BlockSpin — Appeals", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
     maybe_persist_session(response, user_session, session_refreshed)
@@ -875,10 +875,10 @@ async def submit(
     strings = await get_strings(user_lang)
     success = f"""
       <div class="card">
-        <h1>Appeal submitted</h1>
+        <h1>Appeal Submitted</h1>
         <p>Reference ID: <strong>{html.escape(appeal_id)}</strong></p>
         <p class="muted">We will review your appeal shortly. You will be notified in Discord.</p>
         <a class="btn" href="/">Back home</a>
       </div>
     """
-    return HTMLResponse(render_page("Appeal submitted", success, lang=user_lang, strings=strings), status_code=200, headers={"Cache-Control": "no-store"})
+    return HTMLResponse(render_page("Appeal Submitted", success, lang=current_lang, strings=strings), status_code=200, headers={"Cache-Control": "no-store"})

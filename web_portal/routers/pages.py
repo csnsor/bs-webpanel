@@ -239,6 +239,48 @@ class AuthService:
             "state_data": state_data
         }
 
+def _render_appeal_ineligible(reason: str, user_label: str, strings: Dict[str, str], current_lang: str):
+    """Return the appropriate response for ineligible appeal reasons."""
+    name = html.escape(user_label or "You")
+    if reason == "Appeal declined":
+        content = f"""
+          <div class="card status danger">
+            <h1 style="margin-bottom:10px;">Appeal declined</h1>
+            <p>{name}, your previous appeal was declined. Further appeals are blocked.</p>
+            <a class="btn" href="/">Return home</a>
+          </div>
+        """
+        return HTMLResponse(render_page("Appeal declined", content, lang=current_lang, strings=strings), status_code=403, headers={"Cache-Control": "no-store"})
+
+    if reason == "No active ban":
+        return RedirectResponse("/")
+
+    if reason == "Appeal window closed":
+        content = """
+          <div class="card status danger">
+            <div class="stack">
+              <div class="badge">Appeal window closed</div>
+              <p class="subtitle">This ban is older than 7 days. The appeal window has expired.</p>
+            </div>
+          </div>
+          <div class="actions"><a class="btn secondary" href="/">Return home</a></div>
+        """
+        return HTMLResponse(render_page("Appeal window closed", content, lang=current_lang, strings=strings), status_code=403, headers={"Cache-Control": "no-store"})
+
+    if reason == "Appeal already submitted":
+        content = """
+          <div class="card status danger">
+            <div class="stack">
+              <div class="badge">Appeal already submitted</div>
+              <p class="subtitle">You can submit only one appeal for this ban.</p>
+            </div>
+          </div>
+          <div class="actions"><a class="btn secondary" href="/">Return home</a></div>
+        """
+        return HTMLResponse(render_page("Appeal already submitted", content, lang=current_lang, strings=strings), status_code=409, headers={"Cache-Control": "no-store"})
+
+    return RedirectResponse("/")
+
 
 class PageRenderer:
     """Service for rendering HTML pages."""
@@ -306,28 +348,16 @@ class PageRenderer:
             hero_actions.append('<a class="btn btn--primary" href="/status">Check Appeal Status</a>')
         else:
             # Not logged in, show both options for initial login
-            hero_actions.append(f"""
-                <a class="btn btn--primary" href="{html.escape(discord_login_url)}" aria-label="Login with Discord">
-                    Login with Discord
-                </a>
-            """)
-            hero_actions.append(f"""
-                <a class="btn btn--soft" href="{html.escape(roblox_login_url)}" aria-label="Login with Roblox">
-                    Login with Roblox
-                </a>
-            """)
+            hero_actions.append('<a class="btn btn--primary" href="/status">Check Appeal Status</a>')
+            hero_actions.append('<a class="btn btn--soft" href="#how-it-works">Learn how it works</a>')
         
         # Action buttons in the side panel
         panel_actions = []
         if is_logged_in:
             panel_actions.append('<p class="muted">You are signed in.</p>')
-        else: # Not logged in, show both options for initial login
-            panel_actions.append(
-                f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Login with Discord</a>'
-            )
-            panel_actions.append(
-                f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Login with Roblox</a>'
-            )
+        else: # Not logged in, show guidance
+            panel_actions.append('<p class="muted">Use the buttons in the header to authenticate with Discord or Roblox.</p>')
+            panel_actions.append('<a class="btn btn--soft btn--wide" href="/status">Preview appeal status</a>')
 
         return f"""
         <section class="hero">
@@ -366,7 +396,7 @@ class PageRenderer:
           </div>
 
           <div class="hero__side">
-            <div class="panel">
+            <div class="panel" id="how-it-works">
               <h2 class="panel__title">How it works</h2>
               <ol class="steps">
                 <li><span class="steps__n">1</span> Sign in to confirm your identity.</li>
@@ -717,7 +747,8 @@ class PageRenderer:
         session_token: str,
         current_lang: str,
         strings: Dict[str, str],
-        current_session: Optional[Dict[str, Any]] = None # Added parameter
+        current_session: Optional[Dict[str, Any]] = None, # Added parameter
+        roblox_login_url: Optional[str] = None,
     ) -> HTMLResponse:
         """Render the Discord appeal page."""
         uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
@@ -822,6 +853,8 @@ class PageRenderer:
                 <div class="details-body">{message_cache_html}</div>
               </details>
 
+              {roblox_login_prompt}
+
               <details class="details">
                 <summary>Your history</summary>
                 <div class="details-body">{render_history_items([], format_timestamp=format_timestamp)}</div>
@@ -872,6 +905,17 @@ class PageRenderer:
               <div class="callout callout--info" style="margin-bottom:16px;text-align:center;">
                 <p class="muted" style="margin-bottom:8px;">{html.escape(prompt_text)}</p>
                 <a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}" target="_blank" rel="noopener noreferrer">{html.escape(prompt_cta)}</a>
+              </div>
+            """
+
+        roblox_login_prompt = ""
+        if roblox_login_url:
+            prompt_text = strings.get("link_roblox_prompt", "Connect your Roblox account to sync appeal history.")
+            prompt_cta = strings.get("link_roblox_cta", "Connect Roblox")
+            roblox_login_prompt = f"""
+              <div class="callout callout--info" style="margin-bottom:16px;text-align:center;">
+                <p class="muted" style="margin-bottom:8px;">{html.escape(prompt_text)}</p>
+                <a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}" target="_blank" rel="noopener noreferrer">{html.escape(prompt_cta)}</a>
               </div>
             """
 
@@ -1099,13 +1143,16 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     current_lang = auth_data["lang"]
     strings = await get_strings(current_lang)
     strings = dict(strings)
+    state_data = auth_data.get("state_data", {})
+    ip = auth_data["ip"]
 
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
     display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
 
     # Account Linking Flow
     if existing_session and existing_session.get("internal_user_id"):
-        response = RedirectResponse("/status")
+        return_to = state_data.get("return_to")
+        response = RedirectResponse(return_to or "/status")
         internal_user_id = await resolve_internal_user_id(
             discord_id=user["id"],
             roblox_id=existing_session.get("ruid"),
@@ -1153,50 +1200,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
 
     eligible, reason = await AppealService.check_appeal_eligibility(internal_user_id, ban)
     if not eligible:
-        if reason == "Appeal declined":
-            content = f"""
-              <div class="card status danger">
-                <h1 style="margin-bottom:10px;">Appeal declined</h1>
-                <p>{html.escape(user['username'])}, your previous appeal was declined. Further appeals are blocked.</p>
-                <a class="btn" href="/">Return home</a>
-              </div>
-            """
-            response.status_code = 403
-            response.body = render_page("Appeal declined", content, lang=current_lang, strings=strings)
-            return response
-
-        elif reason == "No active ban":
-            # This case should be handled before, but as a fallback
-            response = RedirectResponse("/")
-            return response
-        
-        elif reason == "Appeal window closed":
-            content = f"""
-              <div class="card status danger">
-                <div class="stack">
-                  <div class="badge">Appeal window closed</div>
-                  <p class="subtitle">This ban is older than 7 days. The appeal window has expired.</p>
-                </div>
-              </div>
-              <div class="actions"><a class="btn secondary" href="/">Return home</a></div>
-            """
-            response.status_code = 403
-            response.body = render_page("Appeal window closed", content, lang=current_lang, strings=strings)
-            return response
-        
-        elif reason == "Appeal already submitted":
-            content = f"""
-              <div class="card status danger">
-                <div class="stack">
-                  <div class="badge">Appeal already submitted</div>
-                  <p class="subtitle">You can submit only one appeal for this ban.</p>
-                </div>
-              </div>
-              <div class="actions"><a class="btn secondary" href="/">Return home</a></div>
-            """
-            response.status_code = 409
-            response.body = render_page("Appeal already submitted", content, lang=current_lang, strings=strings)
-            return response
+        return _render_appeal_ineligible(reason, user["username"], strings, current_lang)
 
     await ensure_dm_guild_membership(user["id"])
     message_cache = await fetch_message_cache(user["id"])
@@ -1237,8 +1241,26 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         "message_cache": message_cache,
     })
     
+    roblox_login_url = None
+    if not updated_session.get("ruid"):
+        roblox_link_state = serializer.dumps({
+            "nonce": secrets.token_urlsafe(8),
+            "lang": current_lang,
+            "state_id": issue_state_token(ip),
+            "return_to": f"/discord/resume?lang={current_lang}",
+        })
+        roblox_login_url = roblox_api.oauth_authorize_url(roblox_link_state)
+
     return await PageRenderer.render_discord_appeal_page(
-        request, user, ban, message_cache, session_token, current_lang, strings, current_session=updated_session
+        request,
+        user,
+        ban,
+        message_cache,
+        session_token,
+        current_lang,
+        strings,
+        current_session=updated_session,
+        roblox_login_url=roblox_login_url,
     )
 
 
@@ -1251,14 +1273,15 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
     user = auth_data["user"]
     current_lang = auth_data["lang"]
     strings = await get_strings(current_lang)
-    
+    state_data = auth_data.get("state_data", {})
     user_id = user["sub"]
     uname_label = user.get("name") or user.get("preferred_username")
     display_name = clean_display_name(user.get("nickname") or uname_label)
 
     # Account Linking Flow
     if existing_session and existing_session.get("internal_user_id"):
-        response = RedirectResponse("/status")
+        return_to = state_data.get("return_to")
+        response = RedirectResponse(return_to or "/status")
         internal_user_id = await resolve_internal_user_id(
             discord_id=existing_session.get("uid"),
             roblox_id=user_id,
@@ -1320,6 +1343,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         "nonce": secrets.token_urlsafe(8),
         "lang": current_lang,
         "state_id": issue_state_token(auth_data["ip"]),
+        "return_to": f"/roblox/resume?lang={current_lang}",
     })
     discord_login_url = None
     if not updated_session_for_roblox_context.get("uid"):
@@ -1334,6 +1358,143 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         strings,
         current_session=updated_session_for_roblox_context,
         discord_login_url=discord_login_url,
+    )
+
+
+@router.get("/roblox/resume", response_class=HTMLResponse)
+async def roblox_resume(request: Request, lang: Optional[str] = None):
+    """Return to the Roblox appeal form after linking Discord."""
+    current_lang = await detect_language(request, lang)
+    strings = await get_strings(current_lang)
+    session = read_user_session(request)
+    if not session or not session.get("ruid"):
+        return RedirectResponse("/")
+
+    internal_user_id = session.get("internal_user_id")
+    if not internal_user_id:
+        return RedirectResponse("/status")
+
+    user_id = session["ruid"]
+    uname_label = session.get("runame") or ""
+    display_name = clean_display_name(session.get("display_name") or uname_label)
+    ban = await roblox_api.get_live_ban_status(user_id)
+    if not ban:
+        return RedirectResponse("/")
+
+    eligible, reason = await AppealService.check_appeal_eligibility(internal_user_id, ban)
+    if not eligible:
+        return _render_appeal_ineligible(reason, display_name or uname_label or "You", strings, current_lang)
+
+    ban_history = await roblox_api.get_ban_history(user_id)
+    short_reason = shorten_public_ban_reason(ban.get("displayReason") or "")
+    session_token = serializer.dumps({
+        "internal_user_id": internal_user_id,
+        "ruid": user_id,
+        "runame": uname_label,
+        "ban_data": ban,
+        "ban_reason_short": short_reason,
+        "ban_history": ban_history,
+        "iat": time.time(),
+        "lang": current_lang,
+    })
+
+    link_state = serializer.dumps({
+        "nonce": secrets.token_urlsafe(8),
+        "lang": current_lang,
+        "state_id": issue_state_token(get_client_ip(request)),
+        "return_to": f"/roblox/resume?lang={current_lang}",
+    })
+    discord_login_url = None
+    if not session.get("uid"):
+        discord_login_url = discord_oauth_authorize_url(link_state)
+
+    user_info = {
+        "sub": user_id,
+        "name": session.get("runame") or "",
+        "preferred_username": session.get("runame") or "",
+        "nickname": session.get("display_name") or session.get("runame"),
+    }
+
+    return await PageRenderer.render_roblox_appeal_page(
+        request,
+        user_info,
+        ban,
+        session_token,
+        current_lang,
+        strings,
+        current_session=session,
+        discord_login_url=discord_login_url,
+    )
+
+
+@router.get("/discord/resume", response_class=HTMLResponse)
+async def discord_resume(request: Request, lang: Optional[str] = None):
+    """Return to the Discord appeal form after linking Roblox."""
+    current_lang = await detect_language(request, lang)
+    strings = await get_strings(current_lang)
+    session = read_user_session(request)
+    if not session or not session.get("uid"):
+        return RedirectResponse("/")
+
+    internal_user_id = session.get("internal_user_id")
+    if not internal_user_id:
+        return RedirectResponse("/status")
+
+    user_id = session["uid"]
+    ban = await fetch_ban_if_exists(user_id)
+    if not ban:
+        return RedirectResponse("/")
+
+    eligible, reason = await AppealService.check_appeal_eligibility(internal_user_id, ban)
+    if not eligible:
+        user_label = session.get("uname") or session.get("display_name") or "You"
+        return _render_appeal_ineligible(reason, user_label, strings, current_lang)
+
+    await ensure_dm_guild_membership(user_id)
+    message_cache = await fetch_message_cache(user_id)
+
+    now = time.time()
+    first_seen = _ban_first_seen.get(internal_user_id, now)
+    _ban_first_seen[internal_user_id] = first_seen
+
+    session_token = serializer.dumps({
+        "internal_user_id": internal_user_id,
+        "uid": user_id,
+        "uname": session.get("uname"),
+        "ban_reason": simplify_ban_reason(ban.get("reason")) or "No reason provided.",
+        "iat": time.time(),
+        "ban_first_seen": first_seen,
+        "lang": current_lang,
+        "message_cache": message_cache,
+    })
+
+    roblox_login_url = None
+    if not session.get("ruid"):
+        link_state = serializer.dumps({
+            "nonce": secrets.token_urlsafe(8),
+            "lang": current_lang,
+            "state_id": issue_state_token(get_client_ip(request)),
+            "return_to": f"/discord/resume?lang={current_lang}",
+        })
+        roblox_login_url = roblox_api.oauth_authorize_url(link_state)
+
+    user = {
+        "id": user_id,
+        "username": session.get("uname") or "",
+        "discriminator": "0",
+        "global_name": session.get("display_name") or session.get("uname"),
+    }
+
+    return await PageRenderer.render_discord_appeal_page(
+        request,
+        user,
+        ban,
+        message_cache,
+        session_token,
+        current_lang,
+        strings,
+        current_session=session,
+        roblox_login_url=roblox_login_url,
     )
 
 

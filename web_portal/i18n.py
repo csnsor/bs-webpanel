@@ -26,6 +26,10 @@ LANG_STRINGS: Dict[str, Dict[str, str]] = {
         "messages_header": "Recent context",
         "no_messages": "No recent messages available.",
         "language_switch": "Switch language",
+        "link_discord_prompt": "Connect your Discord to receive updates about this appeal.",
+        "link_discord_cta": "Connect Discord",
+        "link_roblox_prompt": "Connect your Roblox account to sync appeal history.",
+        "link_roblox_cta": "Connect Roblox",
     },
     "es": {
         "hero_title": "Resuelve tu baneo en BlockSpin.",
@@ -42,6 +46,10 @@ LANG_STRINGS: Dict[str, Dict[str, str]] = {
         "messages_header": "Contexto reciente",
         "no_messages": "No hay mensajes recientes.",
         "language_switch": "Cambiar idioma",
+        "link_discord_prompt": "Conecta tu Discord para recibir actualizaciones sobre esta apelación.",
+        "link_discord_cta": "Conectar Discord",
+        "link_roblox_prompt": "Conecta tu cuenta de Roblox para sincronizar tu historial de apelaciones.",
+        "link_roblox_cta": "Conectar Roblox",
     },
 }
 
@@ -113,4 +121,3 @@ async def detect_language(request: Request, lang_param: Optional[str] = None) ->
         except Exception as exc:
             logging.warning("Geo lookup failed for ip=%s error=%s", ip, exc)
     return "en"
-

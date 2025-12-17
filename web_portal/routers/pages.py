@@ -279,7 +279,7 @@ class PageRenderer:
         strings["script_block"] = PageRenderer._get_home_script()
         
         response = HTMLResponse(
-            render_page("BlockSpin — Appeals", content, lang=current_lang, strings=strings), 
+            render_page("BlockSpin Appeals", content, lang=current_lang, strings=strings),
             headers={"Cache-Control": "no-store"}
         )
         maybe_persist_session(request, response, user_session, session_refreshed)
@@ -307,9 +307,13 @@ class PageRenderer:
             hero_actions.append('<a class="btn btn--primary" href="/status">Check Appeal Status</a>')
             link_ctas = []
             if has_discord and not has_roblox and roblox_login_url:
-                link_ctas.append(f'<a class="btn btn--roblox" href="{html.escape(roblox_login_url)}">Link Roblox</a>')
+                link_ctas.append(
+                    f'<a class="btn btn--roblox" href="{html.escape(roblox_login_url)}" target="_blank" rel="noopener noreferrer">Link Roblox</a>'
+                )
             if has_roblox and not has_discord and discord_login_url:
-                link_ctas.append(f'<a class="btn btn--discord" href="{html.escape(discord_login_url)}">Link Discord</a>')
+                link_ctas.append(
+                    f'<a class="btn btn--discord" href="{html.escape(discord_login_url)}" target="_blank" rel="noopener noreferrer">Link Discord</a>'
+                )
             hero_actions.extend(link_ctas)
         else:
             # Not logged in, show both options for initial login
@@ -329,9 +333,13 @@ class PageRenderer:
         if is_logged_in:
             panel_actions.append(f'<p class="muted">You are signed in.</p><a class="btn btn--soft btn--wide" href="/status">Check Appeal Status</a>')
             if has_discord and not has_roblox and roblox_login_url:
-                panel_actions.append(f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Link Roblox</a>')
+                panel_actions.append(
+                    f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}" target="_blank" rel="noopener noreferrer">Link Roblox</a>'
+                )
             if has_roblox and not has_discord and discord_login_url:
-                panel_actions.append(f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Link Discord</a>')
+                panel_actions.append(
+                    f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}" target="_blank" rel="noopener noreferrer">Link Discord</a>'
+                )
         else: # Not logged in, show both options for initial login
             panel_actions.append(
                 f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Login with Discord</a>'
@@ -339,14 +347,6 @@ class PageRenderer:
             panel_actions.append(
                 f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Login with Roblox</a>'
             )
-
-        link_payload = {
-            "needs_discord": bool(has_roblox and not has_discord),
-            "needs_roblox": bool(has_discord and not has_roblox),
-            "discord_url": discord_login_url or "",
-            "roblox_url": roblox_login_url or "",
-        }
-        link_data_script = f'<script id="home-link-data" type="application/json">{html.escape(json.dumps(link_payload))}</script>'
 
         return f"""
         <section class="hero">
@@ -407,18 +407,22 @@ class PageRenderer:
             </div>
           </div>
         </section>
-
-        {link_data_script}
+        <script id="home-link-data" type="application/json">{html.escape(json.dumps({
+            "needs_discord": bool(has_roblox and not has_discord),
+            "needs_roblox": bool(has_discord and not has_roblox),
+            "discord_url": discord_login_url or "",
+            "roblox_url": roblox_login_url or "",
+        }))}</script>
 
         <section class="grid">
           <article class="card">
             <div class="card__top">
               <h2 class="card__title">Appeal history</h2>
-              <div class="chip" id="historyChip">Loading…</div>
+              <div class="chip" id="historyChip">Loading data…</div>
             </div>
 
             <div class="callout callout--info" id="home-link-prompt" style="margin-bottom:16px; display:none;">
-              <span class="muted small">Connect both accounts to see a combined timeline.</span>
+              <span class="muted small">Connect both platforms to see the complete appeal timeline.</span>
               <div id="home-link-buttons" style="margin-top:6px; display:flex; gap:6px;"></div>
             </div>
 
@@ -479,13 +483,25 @@ class PageRenderer:
             linkData: document.getElementById("home-link-data"),
           };
 
-          function esc(s){ return String(s ?? "").replace(/[&<>"'\\/]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;','/':'&#x2F;'}[m])); }
+          function esc(s){
+            const escMap = {
+              "&":"&amp;",
+              "<":"&lt;",
+              ">":"&gt;",
+              '"':"&quot;",
+              "'":"&#39;",
+              "/":"&#x2F;"
+            };
+            return String(s ?? "").replace(/[&<>"'/]/g, ch => escMap[ch]);
+          }
+
           function statusClass(status){
             const t = String(status || "pending").toLowerCase();
             if (t.startsWith("accept")) return "ok";
             if (t.startsWith("decline")) return "no";
             return "wait";
           }
+
           function statusLabel(status){
             const t = String(status || "pending").toLowerCase();
             if (t.startsWith("accept")) return "Accepted";
@@ -497,7 +513,9 @@ class PageRenderer:
           if (els.linkData){
             try{
               linkInfo = JSON.parse(els.linkData.textContent || "{}");
-            }catch(err){}
+            }catch(err){
+              linkInfo = {};
+            }
           }
 
           function refreshLinkPrompt(){
@@ -508,10 +526,10 @@ class PageRenderer:
             const needsRoblox = linkInfo.needs_roblox && linkInfo.roblox_url;
             let html = "";
             if (needsDiscord){
-              html += `<a class="btn btn--discord btn--soft btn--wide" href="${esc(linkInfo.discord_url)}">Link Discord</a>`;
+              html += `<a class="btn btn--discord btn--soft btn--wide" href="${esc(linkInfo.discord_url)}" target="_blank" rel="noopener noreferrer">Link Discord</a>`;
             }
             if (needsRoblox){
-              html += `<a class="btn btn--roblox btn--soft btn--wide" href="${esc(linkInfo.roblox_url)}">Link Roblox</a>`;
+              html += `<a class="btn btn--roblox btn--soft btn--wide" href="${esc(linkInfo.roblox_url)}" target="_blank" rel="noopener noreferrer">Link Roblox</a>`;
             }
             if (html){
               els.linkButtons.innerHTML = html;
@@ -521,82 +539,114 @@ class PageRenderer:
             }
           }
 
-          refreshLinkPrompt();
+          function setEmptyState(){
+            if (els.liveStatus) els.liveStatus.textContent = "Sign in required";
+            if (els.liveRef) els.liveRef.textContent = "—";
+            if (els.liveDecision) els.liveDecision.textContent = "—";
+            if (els.chip) els.chip.textContent = "No appeals yet";
+            if (els.list){
+              els.list.hidden = true;
+              els.list.innerHTML = "";
+            }
+            if (els.empty){
+              els.empty.hidden = false;
+              const needs = [];
+              if (linkInfo.needs_discord) needs.push("Discord");
+              if (linkInfo.needs_roblox) needs.push("Roblox");
+              const emptyText = needs.length
+                ? `Connect ${needs.join(" and ")} to view your latest appeals.`
+                : "Sign in to see your history and live status.";
+              els.empty.textContent = emptyText;
+            }
+          }
+
+          function setListState(history){
+            if (!els.list){
+              return;
+            }
+            els.list.hidden = history.length === 0;
+            if (!history.length){
+              els.list.innerHTML = "";
+              return;
+            }
+            els.list.innerHTML = history.map(item => {
+              const s = statusLabel(item.status);
+              const cls = statusClass(item.status);
+              const ref = esc(item.appeal_id || "—");
+              const submitted = esc(item.created_at || "—");
+              const reason = esc(item.ban_reason || "No reason recorded");
+              const platform = item.platform ? `<span class="chip chip--ghost">${esc(item.platform)}</span>` : "";
+              return `
+                <li class="row">
+                  <div class="row__left">
+                    <div class="pill pill--${cls}">${esc(s)}</div>
+                    <div class="row__meta">
+                      <div class="row__k">Reference</div>
+                      <div class="row__v">${ref} ${platform}</div>
+                    </div>
+                    <div class="row__meta">
+                      <div class="row__k">Submitted</div>
+                      <div class="row__v">${submitted}</div>
+                    </div>
+                  </div>
+                  <div class="row__right">
+                    <div class="row__k">Ban reason</div>
+                    <div class="row__v row__v--wrap">${reason}</div>
+                  </div>
+                </li>
+              `;
+            }).join("");
+          }
+
+          function updateLiveMetrics(latest, count){
+            if (els.liveStatus) els.liveStatus.textContent = "Active";
+            if (els.liveRef) els.liveRef.textContent = latest?.appeal_id ? String(latest.appeal_id) : "—";
+            if (els.liveDecision) els.liveDecision.textContent = statusLabel(latest?.status);
+            if (els.chip) els.chip.textContent = `${count} appeal${count === 1 ? "" : "s"}`;
+          }
+
+          function updateSignal(online){
+            if (els.feedState) els.feedState.textContent = online ? "Connected" : "Disconnected";
+            if (!els.signalChip){
+              return;
+            }
+            els.signalChip.textContent = online ? "Portal online" : "Live updates unavailable";
+            els.signalChip.classList.toggle("chip--ok", online);
+            els.signalChip.classList.toggle("chip--warn", !online);
+          }
 
           async function tick(){
             try{
               const r = await fetch("/status/data", { headers: { "Accept":"application/json" } });
+              if (!r.ok){
+                throw new Error("status request failed");
+              }
               const data = await r.json();
               const hist = Array.isArray(data.history) ? data.history : [];
-
               if (!hist.length){
-                if (els.liveStatus) els.liveStatus.textContent = "Sign in required";
-                if (els.liveRef) els.liveRef.textContent = "—";
-                if (els.liveDecision) els.liveDecision.textContent = "—";
-                if (els.chip) els.chip.textContent = "No data";
-                if (els.empty) els.empty.hidden = false;
-                if (els.list) els.list.hidden = true;
-                if (els.feedState) els.feedState.textContent = "Idle";
+                setEmptyState();
+                updateSignal(true);
                 return;
               }
-
-              const latest = hist[0] || {};
-              if (els.liveStatus) els.liveStatus.textContent = "Active";
-              if (els.liveRef) els.liveRef.textContent = latest.appeal_id ? String(latest.appeal_id) : "—";
-              if (els.liveDecision) els.liveDecision.textContent = statusLabel(latest.status);
-              if (els.chip) els.chip.textContent = `${hist.length} recent`;
-
+              updateLiveMetrics(hist[0], hist.length);
+              setListState(hist);
               if (els.empty) els.empty.hidden = true;
-              if (els.list) els.list.hidden = false;
-
-              if (els.list){
-                els.list.innerHTML = hist.map(item => {
-                  const s = statusLabel(item.status);
-                  const cls = statusClass(item.status);
-                  return `
-                    <li class="row">
-                      <div class="row__left">
-                        <div class="pill pill--${cls}">${esc(s)}</div>
-                        <div class="row__meta">
-                          <div class="row__k">Reference</div>
-                          <div class="row__v">${esc(item.appeal_id || "—")}</div>
-                        </div>
-                        <div class="row__meta">
-                          <div class="row__k">Submitted</div>
-                          <div class="row__v">${esc(item.created_at || "—")}</div>
-                        </div>
-                      </div>
-                      <div class="row__right">
-                        <div class="row__k">Ban reason</div>
-                        <div class="row__v row__v--wrap">${esc(item.ban_reason || "—")}</div>
-                      </div>
-                    </li>
-                  `;
-                }).join("");
-              }
-
-              if (els.feedState) els.feedState.textContent = "Connected";
-              if (els.signalChip){
-                els.signalChip.textContent = "Portal online";
-                els.signalChip.classList.remove("chip--warn");
-                els.signalChip.classList.add("chip--ok");
-              }
-            }catch(e){
-              if (els.feedState) els.feedState.textContent = "Disconnected";
-              if (els.signalChip){
-                els.signalChip.textContent = "Live updates unavailable";
-                els.signalChip.classList.add("chip--warn");
-                els.signalChip.classList.remove("chip--ok");
-              }
+              updateSignal(true);
+            }catch(err){
+              setEmptyState();
+              if (els.chip) els.chip.textContent = "Live data offline";
               if (els.liveStatus) els.liveStatus.textContent = "Unavailable";
+              updateSignal(false);
             }
           }
 
+          refreshLinkPrompt();
+          setEmptyState();
           tick();
           setInterval(tick, 15000);
         })();
         """
-    
+
     @staticmethod
     async def render_status_page(request: Request, lang: Optional[str] = None) -> HTMLResponse:
         """Render the status page."""
@@ -837,7 +887,7 @@ class PageRenderer:
             login_prompt = f"""
               <div class="callout callout--info" style="margin-bottom:16px;text-align:center;">
                 <p class="muted" style="margin-bottom:8px;">{html.escape(prompt_text)}</p>
-                <a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">{html.escape(prompt_cta)}</a>
+                <a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}" target="_blank" rel="noopener noreferrer">{html.escape(prompt_cta)}</a>
               </div>
             """
 
@@ -984,86 +1034,6 @@ async def status_page(request: Request, lang: Optional[str] = None):
       <ul class="history-list" id="history-list" hidden></ul>
     </div>
 
-    <script>
-      (function(){
-        const historyList = document.getElementById("history-list");
-        const historyEmpty = document.getElementById("history-empty");
-        const statusChip = document.getElementById("liveStatusChip");
-        const liveRef = document.getElementById("liveRef");
-        const liveDecision = document.getElementById("liveDecision");
-        const historyCount = document.getElementById("historyCount");
-
-        function esc(value){
-          return String(value || "").replace(/[&<>"'\\/]/g, function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\\'':'&#39;','/':'&#x2F;'}[m];});
-        }
-
-        function statusLabel(status){
-          const value = String(status || "pending").toLowerCase();
-          if (value.startsWith("accept")) return "Accepted";
-          if (value.startsWith("decline")) return "Declined";
-          return "Pending";
-        }
-
-        function statusClass(status){
-          const value = String(status || "pending").toLowerCase();
-          if (value.startsWith("accept")) return "ok";
-          if (value.startsWith("decline")) return "no";
-          return "wait";
-        }
-
-        function renderHistory(items){
-          if (!items || !items.length){
-            historyEmpty.textContent = "No appeals yet.";
-            historyEmpty.hidden = false;
-            historyList.hidden = true;
-            statusChip.textContent = "No history";
-            liveRef.textContent = "—";
-            liveDecision.textContent = "Pending";
-            historyCount.textContent = "0 appeals";
-            return;
-          }
-
-          historyEmpty.hidden = true;
-          historyList.hidden = false;
-          historyList.innerHTML = items.map(function(item){
-            const stat = statusLabel(item.status);
-            const cls = statusClass(item.status);
-            const ref = esc(item.appeal_id || item.id || "—");
-            const reason = esc(item.ban_reason || "No reason recorded.");
-            const submitted = esc(item.created_at ? new Date(item.created_at).toLocaleString() : "Unknown");
-            return `
-              <li class="history-item">
-                <div class="status-chip ${stat === "Accepted" ? "accepted" : stat === "Declined" ? "declined" : "pending"}">${stat}</div>
-                <div class="meta"><strong>Reference:</strong> ${ref}</div>
-                <div class="meta"><strong>Submitted:</strong> ${submitted}</div>
-                <div class="meta"><strong>Platform:</strong> ${esc(item.platform || "Unknown")}</div>
-                <div class="meta"><strong>Ban reason:</strong> ${reason}</div>
-              </li>
-            `;
-          }).join("");
-
-          const latest = items[0] || {};
-          statusChip.textContent = statusLabel(latest.status);
-          liveRef.textContent = esc(latest.appeal_id || latest.id || "—");
-          liveDecision.textContent = statusLabel(latest.status);
-          historyCount.textContent = `${items.length} appeals`;
-        }
-
-        fetch("/status/data", { headers: { "Accept": "application/json" } })
-          .then(function(response){
-            if (!response.ok) throw new Error("Failed to fetch history");
-            return response.json();
-          })
-          .then(function(data){
-            renderHistory(Array.isArray(data.history) ? data.history : []);
-          })
-          .catch(function(error){
-            historyEmpty.textContent = "Live data unavailable.";
-            historyList.hidden = true;
-            console.error("Status history fetch failed", error);
-          });
-      })();
-    </script>
     """
 
     content = f"""

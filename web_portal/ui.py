@@ -153,10 +153,14 @@ def build_user_chip(
         buttons.append(f"<span class='greeting'>Hi, {html.escape(name)}</span>")
 
     if has_discord and not has_roblox and roblox_login_url:
-        buttons.append(f"<a class='btn btn--roblox' href='{html.escape(roblox_login_url)}'>Link Roblox</a>")
+        buttons.append(
+            f"<a class='btn btn--roblox' href='{html.escape(roblox_login_url)}' target='_blank' rel='noopener noreferrer'>Link Roblox</a>"
+        )
     
     if has_roblox and not has_discord and discord_login_url:
-        buttons.append(f"<a class='btn btn--discord' href='{html.escape(discord_login_url)}'>Link Discord</a>")
+        buttons.append(
+            f"<a class='btn btn--discord' href='{html.escape(discord_login_url)}' target='_blank' rel='noopener noreferrer'>Link Discord</a>"
+        )
 
     if has_discord and has_roblox:
         buttons.append("<span class='chip chip--ok'>Accounts Linked</span>")
@@ -199,4 +203,3 @@ def render_error(
         status_code=status_code,
         headers={"Cache-Control": "no-store"},
     )
-

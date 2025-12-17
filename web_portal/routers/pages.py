@@ -412,6 +412,7 @@ class PageRenderer:
             "needs_roblox": bool(has_discord and not has_roblox),
             "discord_url": discord_login_url or "",
             "roblox_url": roblox_login_url or "",
+            "session_active": bool(is_logged_in),
         }))}</script>
 
         <section class="grid">
@@ -540,7 +541,7 @@ class PageRenderer:
           }
 
           function setEmptyState(){
-            if (els.liveStatus) els.liveStatus.textContent = "Sign in required";
+            if (els.liveStatus) els.liveStatus.textContent = linkInfo.session_active ? "Signed in" : "Sign in to see your status";
             if (els.liveRef) els.liveRef.textContent = "—";
             if (els.liveDecision) els.liveDecision.textContent = "—";
             if (els.chip) els.chip.textContent = "No appeals yet";
@@ -555,7 +556,9 @@ class PageRenderer:
               if (linkInfo.needs_roblox) needs.push("Roblox");
               const emptyText = needs.length
                 ? `Connect ${needs.join(" and ")} to view your latest appeals.`
-                : "Sign in to see your history and live status.";
+                : linkInfo.session_active
+                  ? "You are signed in but have no appeals yet."
+                  : "Sign in to see your history and live status.";
               els.empty.textContent = emptyText;
             }
           }

@@ -908,17 +908,6 @@ class PageRenderer:
               </div>
             """
 
-        roblox_login_prompt = ""
-        if roblox_login_url:
-            prompt_text = strings.get("link_roblox_prompt", "Connect your Roblox account to sync appeal history.")
-            prompt_cta = strings.get("link_roblox_cta", "Connect Roblox")
-            roblox_login_prompt = f"""
-              <div class="callout callout--info" style="margin-bottom:16px;text-align:center;">
-                <p class="muted" style="margin-bottom:8px;">{html.escape(prompt_text)}</p>
-                <a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}" target="_blank" rel="noopener noreferrer">{html.escape(prompt_cta)}</a>
-              </div>
-            """
-
         content = f"""
           <div class="grid-2">
             <div class="form-card">

@@ -937,8 +937,13 @@ async def status_page(request: Request, lang: Optional[str] = None):
     </script>
     """
 
-    content += history_html
-    content += f"""
+    content = f"""
+      <div class="card status-card">
+        <div class="status-heading">
+          <h1>Appeal history for {display_name}</h1>
+          <p class="muted">Monitor decisions and peer context for this ban review.</p>
+        </div>
+        {history_html}
         <div class="btn-row" style="margin-top:10px;">
           <a class="btn secondary" href="/">Back home</a>
         </div>

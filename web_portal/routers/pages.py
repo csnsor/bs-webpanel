@@ -15,7 +15,7 @@ from fastapi.security import HTTPBearer
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from ..i18n import detect_language, get_strings, translate_text
-from ..services import appeal_db, roblox_api, bloxlink_api
+from ..services import appeal_db, roblox_api
 from ..services.discord_api import (
     ensure_dm_guild_membership,
     exchange_code_for_token,
@@ -39,11 +39,11 @@ from ..services.sessions import (
     update_session_with_platform,
 )
 from ..services.supabase import (
-    find_or_create_and_link_user, # Added
     get_remote_last_submit,
     is_session_token_used,
     is_supabase_ready,
     mark_session_token,
+    resolve_internal_user_id,
     supabase_request,
 )
 from app.main import fetch_appeal_history, log_appeal_to_supabase
@@ -1018,12 +1018,12 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     # Account Linking Flow
     if existing_session and existing_session.get("internal_user_id"):
         response = RedirectResponse("/status")
-        internal_user_id = existing_session["internal_user_id"]
-        
-        # Link Discord ID to the existing internal user
-        await find_or_create_and_link_user(internal_user_id=internal_user_id, discord_id=user["id"])
-        
-        # Update the session with the new Discord info
+        internal_user_id = await resolve_internal_user_id(
+            discord_id=user["id"],
+            roblox_id=existing_session.get("ruid"),
+            current_id=existing_session["internal_user_id"],
+        )
+
         update_session_with_platform(
             response,
             existing_session,
@@ -1031,14 +1031,12 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
             user["id"],
             uname_label,
             display_name,
+            internal_user_id=internal_user_id,
         )
         return response
 
     # Standard Login/Appeal Flow
-    internal_user_record = await find_or_create_and_link_user(discord_id=user["id"])
-    if not internal_user_record:
-        raise HTTPException(status_code=500, detail="Failed to retrieve or create internal user record.")
-    internal_user_id = internal_user_record["id"]
+    internal_user_id = await resolve_internal_user_id(discord_id=user["id"])
 
     ban = await fetch_ban_if_exists(user["id"])
     
@@ -1173,12 +1171,12 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
     # Account Linking Flow
     if existing_session and existing_session.get("internal_user_id"):
         response = RedirectResponse("/status")
-        internal_user_id = existing_session["internal_user_id"]
-        
-        # Link Roblox ID to the existing internal user
-        await find_or_create_and_link_user(internal_user_id=internal_user_id, roblox_id=user_id)
-        
-        # Update the session with the new Roblox info
+        internal_user_id = await resolve_internal_user_id(
+            discord_id=existing_session.get("uid"),
+            roblox_id=user_id,
+            current_id=existing_session["internal_user_id"],
+        )
+
         update_session_with_platform(
             response,
             existing_session,
@@ -1186,14 +1184,12 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
             user_id,
             uname_label,
             display_name,
+            internal_user_id=internal_user_id,
         )
         return response
 
     # Standard Login/Appeal Flow
-    internal_user_record = await find_or_create_and_link_user(roblox_id=user_id)
-    if not internal_user_record:
-        raise HTTPException(status_code=500, detail="Failed to retrieve or create internal user record.")
-    internal_user_id = internal_user_record["id"]
+    internal_user_id = await resolve_internal_user_id(roblox_id=user_id)
     
     ban = await roblox_api.get_live_ban_status(user_id)
     if not ban:

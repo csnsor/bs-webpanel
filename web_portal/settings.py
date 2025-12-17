@@ -35,7 +35,6 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 SUPABASE_TABLE = "discord-appeals"
 SUPABASE_SESSION_TABLE = "discord-appeal-sessions"
 SUPABASE_CONTEXT_TABLE = "banned_user_context"
-USERS_TABLE = "users"
 
 # Roblox settings
 ROBLOX_CLIENT_ID = os.getenv("ROBLOX_CLIENT_ID")
@@ -108,4 +107,3 @@ def validate_required_envs() -> None:
     ]
     if missing:
         raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
-

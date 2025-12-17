@@ -937,18 +937,18 @@ async def status_page(request: Request, lang: Optional[str] = None):
     </script>
     """
 
-        content += history_html
-        content += f"""
-            <div class="btn-row" style="margin-top:10px;">
-              <a class="btn secondary" href="/">Back home</a>
-            </div>
-          </div>
-        """
-        
-        resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
-        maybe_persist_session(request, resp, session, session_refreshed)
-        resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
-        return resp
+    content += history_html
+    content += f"""
+        <div class="btn-row" style="margin-top:10px;">
+          <a class="btn secondary" href="/">Back home</a>
+        </div>
+      </div>
+    """
+    
+    resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
+    maybe_persist_session(request, resp, session, session_refreshed)
+    resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+    return resp
 
 @router.get("/status/data")
 async def get_status_data(request: Request):

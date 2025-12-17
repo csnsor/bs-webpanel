@@ -895,7 +895,7 @@ async def status_page(request: Request, lang: Optional[str] = None):
     )
     display_name = html.escape(clean_display_name(session.get('display_name') or session.get('uname', 'you')))
 
-    history_html = f"""
+    history_html = """
     <div class="history-wrapper">
       <div class="status-heading">
         <div>

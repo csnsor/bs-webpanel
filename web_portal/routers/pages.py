@@ -46,7 +46,7 @@ from ..services.supabase import (
     resolve_internal_user_id,
     supabase_request,
 )
-from app.main import fetch_appeal_history, log_appeal_to_supabase
+from ..services.supabase import fetch_appeal_history, log_appeal_to_supabase
 from ..settings import (
     APPEAL_COOLDOWN_SECONDS,
     APPEAL_WINDOW_SECONDS,

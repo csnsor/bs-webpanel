@@ -303,18 +303,7 @@ class PageRenderer:
         # Action buttons in the hero section
         hero_actions = []
         if is_logged_in:
-            # If logged in, primary CTA is to check status
             hero_actions.append('<a class="btn btn--primary" href="/status">Check Appeal Status</a>')
-            link_ctas = []
-            if has_discord and not has_roblox and roblox_login_url:
-                link_ctas.append(
-                    f'<a class="btn btn--roblox" href="{html.escape(roblox_login_url)}" target="_blank" rel="noopener noreferrer">Link Roblox</a>'
-                )
-            if has_roblox and not has_discord and discord_login_url:
-                link_ctas.append(
-                    f'<a class="btn btn--discord" href="{html.escape(discord_login_url)}" target="_blank" rel="noopener noreferrer">Link Discord</a>'
-                )
-            hero_actions.extend(link_ctas)
         else:
             # Not logged in, show both options for initial login
             hero_actions.append(f"""
@@ -331,15 +320,7 @@ class PageRenderer:
         # Action buttons in the side panel
         panel_actions = []
         if is_logged_in:
-            panel_actions.append(f'<p class="muted">You are signed in.</p><a class="btn btn--soft btn--wide" href="/status">Check Appeal Status</a>')
-            if has_discord and not has_roblox and roblox_login_url:
-                panel_actions.append(
-                    f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}" target="_blank" rel="noopener noreferrer">Link Roblox</a>'
-                )
-            if has_roblox and not has_discord and discord_login_url:
-                panel_actions.append(
-                    f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}" target="_blank" rel="noopener noreferrer">Link Discord</a>'
-                )
+            panel_actions.append('<p class="muted">You are signed in.</p>')
         else: # Not logged in, show both options for initial login
             panel_actions.append(
                 f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Login with Discord</a>'

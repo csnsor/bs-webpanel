@@ -1144,6 +1144,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     strings = await get_strings(current_lang)
     strings = dict(strings)
     state_data = auth_data.get("state_data", {})
+    return_to = state_data.get("return_to")
     ip = auth_data["ip"]
 
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
@@ -1151,7 +1152,6 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
 
     # Account Linking Flow
     if existing_session and existing_session.get("internal_user_id"):
-        return_to = state_data.get("return_to")
         response = RedirectResponse(return_to or "/status")
         internal_user_id = await resolve_internal_user_id(
             discord_id=user["id"],
@@ -1176,7 +1176,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     ban = await fetch_ban_if_exists(user["id"])
     
     if not ban:
-        response = RedirectResponse("/")
+        response = RedirectResponse(return_to or "/")
         persist_session(
             response,
             internal_user_id=internal_user_id,
@@ -1279,8 +1279,8 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
     display_name = clean_display_name(user.get("nickname") or uname_label)
 
     # Account Linking Flow
+    return_to = state_data.get("return_to")
     if existing_session and existing_session.get("internal_user_id"):
-        return_to = state_data.get("return_to")
         response = RedirectResponse(return_to or "/status")
         internal_user_id = await resolve_internal_user_id(
             discord_id=existing_session.get("uid"),
@@ -1304,7 +1304,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
     
     ban = await roblox_api.get_live_ban_status(user_id)
     if not ban:
-        response = RedirectResponse("/")
+        response = RedirectResponse(return_to or "/")
         persist_session(
             response,
             internal_user_id,

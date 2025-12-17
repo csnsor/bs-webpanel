@@ -895,45 +895,100 @@ async def status_page(request: Request, lang: Optional[str] = None):
     )
     display_name = html.escape(clean_display_name(session.get('display_name') or session.get('uname', 'you')))
 
-    # The history is now loaded dynamically by the frontend from /status/data
-    history_html = """
-    <div id="history-container">
-        <div class="loading">Loading history...</div>
+    history_html = f"""
+    <div class="history-wrapper">
+      <div class="status-heading">
+        <div>
+          <div class="status-chip" id="liveStatusChip">Loading…</div>
+          <p class="muted small">Latest ref: <span id="liveRef">—</span></p>
+          <p class="muted small">Decision: <span id="liveDecision">Pending</span></p>
+        </div>
+        <div class="muted small" id="historyCount">0 appeals</div>
+      </div>
+
+      <div id="history-empty" class="muted" style="margin-bottom:10px;">Loading history…</div>
+      <ul class="history-list" id="history-list" hidden></ul>
     </div>
+
     <script>
-        fetch('/status/data')
-            .then(response => response.json())
-            .then(data => {
-                const container = document.getElementById('history-container');
-                if (data.history && data.history.length > 0) {
-                    container.innerHTML = `<ul>${data.history.map(item => `
-                        <li class="row">
-                            <div class="row__left">
-                                <div class="pill pill--${item.status === 'accepted' ? 'ok' : item.status === 'declined' ? 'no' : 'wait'}">${item.status}</div>
-                                <div class="row__meta">
-                                    <div class="row__k">Platform</div>
-                                    <div class="row__v">${item.platform}</div>
-                                </div>
-                                <div class="row__meta">
-                                    <div class="row__k">Submitted</div>
-                                    <div class="row__v">${new Date(item.created_at).toLocaleString()}</div>
-                                </div>
-                            </div>
-                            <div class="row__right">
-                                <div class="row__k">Reason</div>
-                                <div class="row__v row__v--wrap">${item.ban_reason || 'N/A'}</div>
-                            </div>
-                        </li>
-                    `).join('')}</ul>`;
-                } else {
-                    container.innerHTML = '<div class="muted">No appeal history found.</div>';
-                }
-            })
-            .catch(error => {
-                const container = document.getElementById('history-container');
-                container.innerHTML = '<div class="danger">Failed to load appeal history.</div>';
-                console.error('Error fetching appeal history:', error);
-            });
+      (function(){
+        const historyList = document.getElementById("history-list");
+        const historyEmpty = document.getElementById("history-empty");
+        const statusChip = document.getElementById("liveStatusChip");
+        const liveRef = document.getElementById("liveRef");
+        const liveDecision = document.getElementById("liveDecision");
+        const historyCount = document.getElementById("historyCount");
+
+        function esc(value){
+          return String(value || "").replace(/[&<>"'\\/]/g, function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\\'':'&#39;','/':'&#x2F;'}[m];});
+        }
+
+        function statusLabel(status){
+          const value = String(status || "pending").toLowerCase();
+          if (value.startsWith("accept")) return "Accepted";
+          if (value.startsWith("decline")) return "Declined";
+          return "Pending";
+        }
+
+        function statusClass(status){
+          const value = String(status || "pending").toLowerCase();
+          if (value.startsWith("accept")) return "ok";
+          if (value.startsWith("decline")) return "no";
+          return "wait";
+        }
+
+        function renderHistory(items){
+          if (!items || !items.length){
+            historyEmpty.textContent = "No appeals yet.";
+            historyEmpty.hidden = false;
+            historyList.hidden = true;
+            statusChip.textContent = "No history";
+            liveRef.textContent = "—";
+            liveDecision.textContent = "Pending";
+            historyCount.textContent = "0 appeals";
+            return;
+          }
+
+          historyEmpty.hidden = true;
+          historyList.hidden = false;
+          historyList.innerHTML = items.map(function(item){
+            const stat = statusLabel(item.status);
+            const cls = statusClass(item.status);
+            const ref = esc(item.appeal_id || item.id || "—");
+            const reason = esc(item.ban_reason || "No reason recorded.");
+            const submitted = esc(item.created_at ? new Date(item.created_at).toLocaleString() : "Unknown");
+            return `
+              <li class="history-item">
+                <div class="status-chip ${stat === "Accepted" ? "accepted" : stat === "Declined" ? "declined" : "pending"}">${stat}</div>
+                <div class="meta"><strong>Reference:</strong> ${ref}</div>
+                <div class="meta"><strong>Submitted:</strong> ${submitted}</div>
+                <div class="meta"><strong>Platform:</strong> ${esc(item.platform || "Unknown")}</div>
+                <div class="meta"><strong>Ban reason:</strong> ${reason}</div>
+              </li>
+            `;
+          }).join("");
+
+          const latest = items[0] || {};
+          statusChip.textContent = statusLabel(latest.status);
+          liveRef.textContent = esc(latest.appeal_id || latest.id || "—");
+          liveDecision.textContent = statusLabel(latest.status);
+          historyCount.textContent = `${items.length} appeals`;
+        }
+
+        fetch("/status/data", { headers: { "Accept": "application/json" } })
+          .then(function(response){
+            if (!response.ok) throw new Error("Failed to fetch history");
+            return response.json();
+          })
+          .then(function(data){
+            renderHistory(Array.isArray(data.history) ? data.history : []);
+          })
+          .catch(function(error){
+            historyEmpty.textContent = "Live data unavailable.";
+            historyList.hidden = true;
+            console.error("Status history fetch failed", error);
+          });
+      })();
     </script>
     """
 

@@ -124,19 +124,142 @@ def persist_session(
         samesite="Lax",
 
 
-    )
+        )
 
 
-    return session
+        return session
 
 
+    
 
 
+    
 
 
+    def update_session_with_platform(
 
 
-def maybe_persist_session(request: Request, response: Response, session: Optional[dict], refreshed: bool) -> None:
+        response: Response,
+
+
+        existing_session: dict,
+
+
+        platform_type: str,
+
+
+        platform_id: str,
+
+
+        username: str,
+
+
+        display_name: str,
+
+
+    ) -> dict:
+
+
+        """
+
+
+        Updates an existing session with a new platform's data.
+
+
+        """
+
+
+        updated_session = dict(existing_session)
+
+
+    
+
+
+        if platform_type == "discord":
+
+
+            updated_session["uid"] = platform_id
+
+
+            updated_session["uname"] = username
+
+
+        elif platform_type == "roblox":
+
+
+            updated_session["ruid"] = platform_id
+
+
+            updated_session["runame"] = username
+
+
+        else:
+
+
+            logging.error("Invalid platform_type passed to update_session_with_platform: %s", platform_type)
+
+
+            raise ValueError("Invalid platform_type")
+
+
+    
+
+
+        # Update the primary display name if the new platform's display name is more "expressive"
+
+
+        if display_name and len(display_name) > len(updated_session.get("display_name", "")):
+
+
+            updated_session["display_name"] = display_name
+
+
+        
+
+
+        updated_session["iat"] = time.time()
+
+
+    
+
+
+        token = serializer.dumps(updated_session)
+
+
+        response.set_cookie(
+
+
+            key=SESSION_COOKIE_NAME,
+
+
+            value=token,
+
+
+            max_age=PERSIST_SESSION_SECONDS,
+
+
+            secure=True,
+
+
+            httponly=True,
+
+
+            samesite="Lax",
+
+
+        )
+
+
+        return updated_session
+
+
+    
+
+
+    
+
+
+    def maybe_persist_session(request: Request, response: Response, session: Optional[dict], refreshed: bool) -> None:
 
 
     if session: # Only proceed if there's a session to persist

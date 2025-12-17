@@ -130,6 +130,7 @@ def build_user_chip(
     roblox_login_url: Optional[str] = None,
 ) -> str:
     if not session:
+        # Not logged in, show both login buttons
         return f"""
           <div class="top__actions">
             <a class="btn btn--discord" href="{html.escape(discord_login_url or '#')}" aria-label="Login with Discord">
@@ -141,28 +142,26 @@ def build_user_chip(
           </div>
         """
 
-    logged_in_platform = session.get("logged_in_platform")
+    # User is logged in
     name = clean_display_name(session.get("display_name") or "")
+    has_discord = "uid" in session
+    has_roblox = "ruid" in session
 
     buttons = []
-
-    if logged_in_platform == "discord":
-        user_id = session.get("uid")
-        if name:
-            buttons.append(f"<span class='greeting'>Hi, {html.escape(name)} (Discord)</span>")
-        if user_id:
-            buttons.append(f"<span class='greeting'>ID: {html.escape(str(user_id))}</span>")
-    elif logged_in_platform == "roblox":
-        user_id = session.get("ruid")
-        if name:
-            buttons.append(f"<span class='greeting'>Hi, {html.escape(name)} (Roblox)</span>")
-        if user_id:
-            buttons.append(f"<span class='greeting'>ID: {html.escape(str(user_id))}</span>")
     
-    # Always show Appeal Status if logged into any platform
-    if logged_in_platform: # Check if any platform is logged in
-        buttons.append("<a class='btn btn--primary' href='/status'>Appeal Status</a>")
+    if name:
+        buttons.append(f"<span class='greeting'>Hi, {html.escape(name)}</span>")
 
+    if has_discord and not has_roblox and roblox_login_url:
+        buttons.append(f"<a class='btn btn--roblox' href='{html.escape(roblox_login_url)}'>Link Roblox</a>")
+    
+    if has_roblox and not has_discord and discord_login_url:
+        buttons.append(f"<a class='btn btn--discord' href='{html.escape(discord_login_url)}'>Link Discord</a>")
+
+    if has_discord and has_roblox:
+        buttons.append("<span class='chip chip--ok'>Accounts Linked</span>")
+
+    buttons.append("<a class='btn btn--primary' href='/status'>Appeal Status</a>")
     buttons.append("<a class='btn btn--ghost' href='/logout'>Logout</a>")
 
     return f'<div class="top__actions">{" ".join(buttons)}</div>'

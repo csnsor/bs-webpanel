@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import logging
 import secrets
 import time
@@ -296,12 +297,20 @@ class PageRenderer:
         
         session = session or {}
         is_logged_in = "internal_user_id" in session
+        has_discord = bool(session.get("uid"))
+        has_roblox = bool(session.get("ruid"))
 
         # Action buttons in the hero section
         hero_actions = []
         if is_logged_in:
             # If logged in, primary CTA is to check status
             hero_actions.append('<a class="btn btn--primary" href="/status">Check Appeal Status</a>')
+            link_ctas = []
+            if has_discord and not has_roblox and roblox_login_url:
+                link_ctas.append(f'<a class="btn btn--roblox" href="{html.escape(roblox_login_url)}">Link Roblox</a>')
+            if has_roblox and not has_discord and discord_login_url:
+                link_ctas.append(f'<a class="btn btn--discord" href="{html.escape(discord_login_url)}">Link Discord</a>')
+            hero_actions.extend(link_ctas)
         else:
             # Not logged in, show both options for initial login
             hero_actions.append(f"""
@@ -319,6 +328,10 @@ class PageRenderer:
         panel_actions = []
         if is_logged_in:
             panel_actions.append(f'<p class="muted">You are signed in.</p><a class="btn btn--soft btn--wide" href="/status">Check Appeal Status</a>')
+            if has_discord and not has_roblox and roblox_login_url:
+                panel_actions.append(f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Link Roblox</a>')
+            if has_roblox and not has_discord and discord_login_url:
+                panel_actions.append(f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Link Discord</a>')
         else: # Not logged in, show both options for initial login
             panel_actions.append(
                 f'<a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">Login with Discord</a>'
@@ -326,6 +339,14 @@ class PageRenderer:
             panel_actions.append(
                 f'<a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">Login with Roblox</a>'
             )
+
+        link_payload = {
+            "needs_discord": bool(has_roblox and not has_discord),
+            "needs_roblox": bool(has_discord and not has_roblox),
+            "discord_url": discord_login_url or "",
+            "roblox_url": roblox_login_url or "",
+        }
+        link_data_script = f'<script id="home-link-data" type="application/json">{html.escape(json.dumps(link_payload))}</script>'
 
         return f"""
         <section class="hero">
@@ -387,11 +408,18 @@ class PageRenderer:
           </div>
         </section>
 
+        {link_data_script}
+
         <section class="grid">
           <article class="card">
             <div class="card__top">
               <h2 class="card__title">Appeal history</h2>
               <div class="chip" id="historyChip">Loading…</div>
+            </div>
+
+            <div class="callout callout--info" id="home-link-prompt" style="margin-bottom:16px; display:none;">
+              <span class="muted small">Connect both accounts to see a combined timeline.</span>
+              <div id="home-link-buttons" style="margin-top:6px; display:flex; gap:6px;"></div>
             </div>
 
             <div class="empty" id="historyEmpty">
@@ -446,6 +474,9 @@ class PageRenderer:
             chip: document.getElementById("historyChip"),
             feedState: document.getElementById("feedState"),
             signalChip: document.getElementById("signalChip"),
+            linkPrompt: document.getElementById("home-link-prompt"),
+            linkButtons: document.getElementById("home-link-buttons"),
+            linkData: document.getElementById("home-link-data"),
           };
 
           function esc(s){ return String(s ?? "").replace(/[&<>"'\\/]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;','/':'&#x2F;'}[m])); }
@@ -461,6 +492,36 @@ class PageRenderer:
             if (t.startsWith("decline")) return "Declined";
             return "Pending";
           }
+
+          let linkInfo = {};
+          if (els.linkData){
+            try{
+              linkInfo = JSON.parse(els.linkData.textContent || "{}");
+            }catch(err){}
+          }
+
+          function refreshLinkPrompt(){
+            if (!els.linkPrompt || !els.linkButtons){
+              return;
+            }
+            const needsDiscord = linkInfo.needs_discord && linkInfo.discord_url;
+            const needsRoblox = linkInfo.needs_roblox && linkInfo.roblox_url;
+            let html = "";
+            if (needsDiscord){
+              html += `<a class="btn btn--discord btn--soft btn--wide" href="${esc(linkInfo.discord_url)}">Link Discord</a>`;
+            }
+            if (needsRoblox){
+              html += `<a class="btn btn--roblox btn--soft btn--wide" href="${esc(linkInfo.roblox_url)}">Link Roblox</a>`;
+            }
+            if (html){
+              els.linkButtons.innerHTML = html;
+              els.linkPrompt.style.display = "flex";
+            } else {
+              els.linkPrompt.style.display = "none";
+            }
+          }
+
+          refreshLinkPrompt();
 
           async function tick(){
             try{
@@ -755,7 +816,8 @@ class PageRenderer:
         session_token: str,
         current_lang: str,
         strings: Dict[str, str],
-        current_session: Optional[Dict[str, Any]] = None # Added parameter
+        current_session: Optional[Dict[str, Any]] = None,
+        discord_login_url: Optional[str] = None,
     ) -> HTMLResponse:
         """Render the Roblox appeal page."""
         user_id = user["sub"]
@@ -768,6 +830,17 @@ class PageRenderer:
         ban_reason = html.escape(short_reason)
         user_id_label = html.escape(str(user_id))
 
+        login_prompt = ""
+        if discord_login_url:
+            prompt_text = strings.get("link_discord_prompt", "Connect your Discord to receive updates about this appeal.")
+            prompt_cta = strings.get("link_discord_cta", "Connect Discord")
+            login_prompt = f"""
+              <div class="callout callout--info" style="margin-bottom:16px;text-align:center;">
+                <p class="muted" style="margin-bottom:8px;">{html.escape(prompt_text)}</p>
+                <a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">{html.escape(prompt_cta)}</a>
+              </div>
+            """
+
         content = f"""
           <div class="grid-2">
             <div class="form-card">
@@ -775,6 +848,7 @@ class PageRenderer:
               <p class="muted">One appeal per ban. Be clear and concise.</p>
               <form class="form" action="/roblox/submit" method="post">
                 <input type="hidden" name="session" value="{html.escape(session_token)}" />
+                {login_prompt}
                 <div class="field">
                   <label for="appeal_reason">Why should you be unbanned?</label>
                   <textarea name="appeal_reason" required placeholder="Explain what happened and why you should be allowed back."></textarea>
@@ -1288,9 +1362,24 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         "iat": time.time(),
         "lang": current_lang,
     })
+    link_state = serializer.dumps({
+        "nonce": secrets.token_urlsafe(8),
+        "lang": current_lang,
+        "state_id": issue_state_token(auth_data["ip"]),
+    })
+    discord_login_url = None
+    if not updated_session_for_roblox_context.get("uid"):
+        discord_login_url = discord_oauth_authorize_url(link_state)
     
     return await PageRenderer.render_roblox_appeal_page(
-        request, user, ban, session_token, current_lang, strings, current_session=updated_session_for_roblox_context
+        request,
+        user,
+        ban,
+        session_token,
+        current_lang,
+        strings,
+        current_session=updated_session_for_roblox_context,
+        discord_login_url=discord_login_url,
     )
 
 

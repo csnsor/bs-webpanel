@@ -57,47 +57,6 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     script_block = strings.get("script_block")
     script_nonce = strings.get("script_nonce") or secrets.token_urlsafe(12)
     full_script = script_block or ""
-    consent_script = """
-      (function(){
-        const storageKey = "bs_terms_accepted_v1";
-        const overlay = document.getElementById("terms-overlay");
-        const acceptBtn = document.getElementById("terms-accept");
-        const closeBtn = document.getElementById("terms-close");
-        const checkbox = document.getElementById("terms-checkbox");
-        const requireLinks = () => document.querySelectorAll("a.require-terms");
-
-        const isAccepted = () => window.localStorage.getItem(storageKey) === "1";
-        const show = () => { if (overlay) overlay.style.display = "flex"; };
-        const hide = () => { if (overlay) overlay.style.display = "none"; };
-
-        function attachGuards() {
-          requireLinks().forEach((el) => {
-            el.addEventListener("click", (e) => {
-              if (!isAccepted()) {
-                e.preventDefault();
-                show();
-              }
-            });
-          });
-        }
-
-        if (acceptBtn) {
-          acceptBtn.addEventListener("click", () => {
-            if (!checkbox || !checkbox.checked) return;
-            window.localStorage.setItem(storageKey, "1");
-            hide();
-          });
-        }
-        if (closeBtn) {
-          closeBtn.addEventListener("click", () => hide());
-        }
-
-        if (!isAccepted()) {
-          show();
-        }
-        attachGuards();
-      })();
-    """
     csp = (
         "default-src 'self'; "
         "img-src 'self' data: https://*.discordapp.com https://*.discord.com; "
@@ -174,24 +133,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
           </footer>
         </main>
 
-        <div id="terms-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); backdrop-filter: blur(6px); z-index:2000; align-items:center; justify-content:center; padding:16px;">
-          <div class="card" style="max-width:520px; width:100%; background:var(--card-bg-3); border:1px solid var(--border-color); box-shadow:var(--shadow-lg);">
-            <h2 style="margin-bottom:8px;">Accept Terms</h2>
-            <p class="muted">You must agree to the Terms of Service and Privacy Notice to continue using the BlockSpin Appeals portal.</p>
-            <div class="field" style="margin-top:12px; margin-bottom:12px;">
-              <label style="display:flex; align-items:center; gap:8px; text-transform:none; letter-spacing:0;">
-                <input type="checkbox" id="terms-checkbox" />
-                <span>I agree to the <a href="/tos" class="nav__link">Terms</a> and <a href="/privacy" class="nav__link">Privacy</a>.</span>
-              </label>
-            </div>
-            <div class="btn-row" style="margin-top:12px;">
-              <button class="btn btn--primary" id="terms-accept">Agree and continue</button>
-              <button class="btn btn--ghost" id="terms-close" type="button">Cancel</button>
-            </div>
-          </div>
-        </div>
-
-        <script nonce="{script_nonce}">{full_script}{consent_script}</script>
+        <script nonce="{script_nonce}">{full_script}</script>
       </body>
     </html>
     """
@@ -207,10 +149,10 @@ def build_user_chip(
         # Not logged in, show both login buttons
         return f"""
           <div class="top__actions">
-            <a class="btn btn--discord require-terms" href="{html.escape(discord_login_url or '#')}" aria-label="Login with Discord">
+            <a class="btn btn--discord" href="{html.escape(discord_login_url or '#')}" aria-label="Login with Discord">
               Login with Discord
             </a>
-            <a class="btn btn--roblox require-terms" href="{html.escape(roblox_login_url or '#')}" aria-label="Login with Roblox">
+            <a class="btn btn--roblox" href="{html.escape(roblox_login_url or '#')}" aria-label="Login with Roblox">
               Login with Roblox
             </a>
           </div>
@@ -228,12 +170,12 @@ def build_user_chip(
 
     if has_discord and not has_roblox and roblox_login_url:
         buttons.append(
-            f"<a class='btn btn--roblox require-terms' href='{html.escape(roblox_login_url)}' target='_blank' rel='noopener noreferrer'>Link Roblox</a>"
+            f"<a class='btn btn--roblox' href='{html.escape(roblox_login_url)}' target='_blank' rel='noopener noreferrer'>Link Roblox</a>"
         )
     
     if has_roblox and not has_discord and discord_login_url:
         buttons.append(
-            f"<a class='btn btn--discord require-terms' href='{html.escape(discord_login_url)}' target='_blank' rel='noopener noreferrer'>Link Discord</a>"
+            f"<a class='btn btn--discord' href='{html.escape(discord_login_url)}' target='_blank' rel='noopener noreferrer'>Link Discord</a>"
         )
 
     if has_discord and has_roblox:

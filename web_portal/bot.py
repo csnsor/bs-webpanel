@@ -249,6 +249,25 @@ if discord:
             except Exception as exc:
                 logging.warning("Failed to force logout all: %s", exc)
 
+        if content.startswith("!appeals_announce"):
+            if not getattr(message.author.guild_permissions, "administrator", False):
+                return
+            parts = (message.content or "").split(" ", 1)
+            announce_text = parts[1].strip() if len(parts) > 1 else ""
+            try:
+                import importlib
+                state_module = importlib.import_module("web_portal.state")
+                if announce_text.lower() == "clear":
+                    state_module._announcement_text = None
+                    await message.channel.send("Appeals announcement cleared.")
+                elif announce_text:
+                    state_module._announcement_text = announce_text
+                    await message.channel.send("Appeals announcement set.")
+                else:
+                    await message.channel.send("Usage: !appeals_announce <content|CLEAR>")
+            except Exception as exc:
+                logging.warning("Failed to set announcement: %s", exc)
+
     @bot_client.event
     async def on_member_ban(guild, user):
         user_id = uid(user.id)

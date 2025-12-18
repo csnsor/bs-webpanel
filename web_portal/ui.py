@@ -12,6 +12,7 @@ from .clients import JINJA_ENV
 from .i18n import LANG_STRINGS
 from .settings import INVITE_LINK
 from .utils import clean_display_name, normalize_language
+from .state import _announcement_text
 
 HISTORY_TEMPLATE = JINJA_ENV.from_string(
     """
@@ -66,6 +67,14 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         "connect-src 'self' https://discord.com https://*.discord.com; "
     )
     favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%237c5cff'/%3E%3Cpath d='M42 10 28 24l4 4-6 6 4 4-6 6-6-6 6-6-4-4 6-6 4 4 6-6 4 4 6-6-10-10Z' fill='white'/%3E%3C/svg%3E"
+    announcement_html = ""
+    if _announcement_text:
+        announcement_html = f"""
+        <div class="announcement">
+          <div class="announcement__dot"></div>
+          <div class="announcement__text">{html.escape(_announcement_text)}</div>
+        </div>
+        """
     return f"""
     <!DOCTYPE html>
     <html lang="{lang}">
@@ -117,6 +126,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         </header>
 
         <main class="wrap">
+          {announcement_html}
           {body_html}
 
           <footer class="footer">

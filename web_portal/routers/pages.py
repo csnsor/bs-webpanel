@@ -1523,6 +1523,7 @@ async def roblox_submit(
         raise HTTPException(status_code=409, detail="This appeal was already submitted.")
 
     network_info = _network_fingerprint(request)
+    ip = network_info.get("ip")
     user_agent = request.headers.get("User-Agent", "unknown")
     enforce_ip_rate_limit(ip)
     

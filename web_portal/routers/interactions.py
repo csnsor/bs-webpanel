@@ -217,7 +217,26 @@ async def handle_discord_accept(parts: list, mod_id: str, mod_name: str, embed: 
     await update_staff_stats(mod_id, mod_name, accepted=True, created_at=(appeal_record or {}).get("created_at"))
     
     note = f"Unban {'OK' if unban_success else 'Fail'}; Re-add {'OK' if readd_success else 'Fail'}; DM {'OK' if dm_delivered else 'Fail'}."
-    return create_updated_embed(embed, "accepted", mod_id, note), None, None
+    log_embed = {
+        "title": f"Discord Appeal Accepted ({appeal_id})",
+        "description": (
+            f"**User:** <@{user_id}> ({user_id})\n"
+            f"**Ban reason:** {(appeal_record or {}).get('ban_reason') or 'N/A'}\n"
+            f"**Appeal:** {(appeal_record or {}).get('appeal_reason') or 'N/A'}"
+        ),
+        "color": 0x2ECC71,
+        "fields": [
+            {"name": "Moderator", "value": f"<@{mod_id}> ({mod_name})", "inline": False},
+            {"name": "DM delivered", "value": str(dm_delivered), "inline": True},
+        ],
+    }
+    meta = {
+        "delete_message": True,
+        "ephemeral": "Appeal accepted, user unbanned, message removed.",
+        "log_channel": FINAL_LOG_CHANNEL_ID,
+        "log_embed": log_embed,
+    }
+    return create_updated_embed(embed, "accepted", mod_id, note), None, meta
 
 async def handle_discord_decline(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str], Optional[dict]]:
     _, appeal_id, user_id = parts
@@ -237,7 +256,26 @@ async def handle_discord_decline(parts: list, mod_id: str, mod_name: str, embed:
     await update_staff_stats(mod_id, mod_name, accepted=False, created_at=(appeal_record or {}).get("created_at"))
     
     note = f"User has been notified by DM (delivered: {dm_delivered})."
-    return create_updated_embed(embed, "declined", mod_id, note), None, None
+    log_embed = {
+        "title": f"Discord Appeal Declined ({appeal_id})",
+        "description": (
+            f"**User:** <@{user_id}> ({user_id})\n"
+            f"**Ban reason:** {(appeal_record or {}).get('ban_reason') or 'N/A'}\n"
+            f"**Appeal:** {(appeal_record or {}).get('appeal_reason') or 'N/A'}"
+        ),
+        "color": 0xE74C3C,
+        "fields": [
+            {"name": "Moderator", "value": f"<@{mod_id}> ({mod_name})", "inline": False},
+            {"name": "DM delivered", "value": str(dm_delivered), "inline": True},
+        ],
+    }
+    meta = {
+        "delete_message": True,
+        "ephemeral": "Appeal declined and message removed.",
+        "log_channel": FINAL_LOG_CHANNEL_ID,
+        "log_embed": log_embed,
+    }
+    return create_updated_embed(embed, "declined", mod_id, note), None, meta
 
 # --- Main Interaction Router ---
 

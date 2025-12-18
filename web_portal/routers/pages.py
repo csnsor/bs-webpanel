@@ -1418,6 +1418,7 @@ async def roblox_submit(
     discord_user_id = (current_session or {}).get("uid")
     if not discord_user_id:
         raise HTTPException(status_code=400, detail="Please link your Discord account to continue your Roblox appeal and receive updates.")
+    await ensure_dm_guild_membership(discord_user_id)
 
     token_hash = hash_value(session)
     roblox_user_id = data["ruid"]

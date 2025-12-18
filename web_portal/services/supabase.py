@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 import json
+import time
 
 import httpx
 
@@ -19,10 +20,76 @@ from ..settings import (
     SUPABASE_URL,
     TARGET_GUILD_ID,
 )
+from ..state import _portal_flag_cache
 
 
 def is_supabase_ready() -> bool:
     return bool(SUPABASE_URL and SUPABASE_KEY)
+
+# Portal flags (lightweight key-value store, cached briefly)
+PORTAL_FLAGS_TABLE = "portal_flags"
+PORTAL_FLAG_TTL = 30  # seconds
+
+async def get_portal_flag(key: str, default: Optional[Any] = None) -> Optional[Any]:
+    cached = _portal_flag_cache.get(key)
+    now = time.time()
+    if cached and now - cached[1] < PORTAL_FLAG_TTL:
+        return cached[0]
+    if not is_supabase_ready():
+        return default
+    try:
+        recs = await supabase_request(
+            "get",
+            PORTAL_FLAGS_TABLE,
+            params={"key": f"eq.{key}", "limit": 1},
+        )
+        if recs and isinstance(recs, list) and len(recs) > 0:
+            value = recs[0].get("value")
+            _portal_flag_cache[key] = (value, now)
+            return value
+    except Exception:
+        pass
+    return default
+
+
+async def set_portal_flag(key: str, value: Any) -> None:
+    if not is_supabase_ready():
+        return
+    payload = {"key": key, "value": value}
+    await supabase_request(
+        "post",
+        PORTAL_FLAGS_TABLE,
+        params={"on_conflict": "key"},
+        payload=payload,
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
+    _portal_flag_cache[key] = (value, time.time())
+
+
+def get_portal_flag_sync(key: str, default: Optional[Any] = None) -> Optional[Any]:
+    cached = _portal_flag_cache.get(key)
+    now = time.time()
+    if cached and now - cached[1] < PORTAL_FLAG_TTL:
+        return cached[0]
+    if not is_supabase_ready():
+        return default
+    try:
+        import httpx as _httpx
+
+        with _httpx.Client(timeout=5.0) as client:
+            resp = client.get(
+                f"{SUPABASE_URL.rstrip('/')}/rest/v1/{PORTAL_FLAGS_TABLE}",
+                params={"key": f"eq.{key}", "limit": 1, "apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+            )
+            if resp.status_code == 200:
+                recs = resp.json()
+                if recs and isinstance(recs, list) and len(recs) > 0:
+                    val = recs[0].get("value")
+                    _portal_flag_cache[key] = (val, now)
+                    return val
+    except Exception:
+        return default
+    return default
 
 
 async def supabase_request(

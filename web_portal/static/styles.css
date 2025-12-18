@@ -1878,4 +1878,39 @@ button:focus-visible,
      l e t t e r - s p a c i n g :   0 . 0 1 e m ; 
  } 
   
- 
+ .announcement {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: linear-gradient(120deg, rgba(124, 92, 255, 0.15), rgba(51, 214, 255, 0.12));
+  border: 1px solid rgba(124, 92, 255, 0.30);
+  color: var(--text-primary);
+  padding: 14px 18px;
+  border-radius: var(--radius-2xl);
+  margin-bottom: var(--space-6);
+  box-shadow: 0 14px 30px -18px var(--glow-primary);
+}
+
+.announcement__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--status-info);
+  box-shadow: 0 0 18px rgba(124, 92, 255, 0.55);
+  margin-right: 6px;
+}
+
+.announcement__text {
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  font-size: 14.5px;
+}
+
+.announcement__badge {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}

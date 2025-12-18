@@ -18,6 +18,7 @@ _session_epoch: int = 0  # bump to force global logout
 _status_data_cache: Dict[str, Tuple[dict, float]] = {}  # {user_id: (payload, ts)}
 _guild_name_cache: Dict[str, Tuple[str, float]] = {}  # {guild_id: (name, ts)}
 _announcement_text: Optional[str] = None
+_portal_flag_cache: Dict[str, Tuple[Any, float]] = {}
 
 # Bot & message cache
 _bot_task: Optional[asyncio.Task] = None

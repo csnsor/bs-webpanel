@@ -19,6 +19,7 @@ from .roblox_api import (
     get_valid_access_token as get_valid_roblox_token,
 )
 from ..state import _session_epoch
+from .supabase import get_portal_flag_sync
 
 serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 
@@ -133,7 +134,8 @@ def read_user_session(request: Request) -> Optional[dict]:
         return None
     try:
         data = serializer.loads(raw)
-        if data.get("epoch") is not None and data.get("epoch") != _session_epoch:
+        remote_epoch = get_portal_flag_sync("session_epoch", _session_epoch)
+        if data.get("epoch") is not None and data.get("epoch") != remote_epoch:
             logging.info("Session epoch mismatch; forcing logout.")
             return None
         return data

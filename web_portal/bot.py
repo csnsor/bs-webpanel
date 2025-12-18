@@ -232,6 +232,8 @@ if discord:
                 return
             try:
                 state._session_epoch += 1
+                from .services.supabase import set_portal_flag
+                await set_portal_flag("session_epoch", state._session_epoch)
 
                 embed = discord.Embed(
                     title="Global logout",

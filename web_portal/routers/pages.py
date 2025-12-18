@@ -449,17 +449,15 @@ class PageRenderer:
         </section>
 
         <section class="card card--wide">
-        <h2 class="card__title">How it works</h2>
+        <h2 class="card__title">BlockSpin Appeals</h2>
 
         <p class="muted">
-            Appeals are handled through a single account that links your Discord and
-            Roblox identities. You can connect either one first — everything is merged
-            automatically. Once linked, you can submit appeals, track updates, and review moderator
-            decisions in one place.
+            Welcome to the official BlockSpin ban appeal portal. This site is used to submit and review appeals related to BlockSpin moderation actions. Appeals are handled under a single linked account to ensure accurate review and
+  consistent history. Please read how the process works before submitting an appeal.
         </p>
 
         <div class="btn-row" style="margin-top:16px;">
-            <a class="btn btn--ghost" href="/status">View appeal status</a>
+            <a class="btn btn--ghost" href="/status">View Appeal Status</a>
             <a class="btn btn--ghost" href="/how-it-works">Learn more</a>
         </div>
         </section>

@@ -441,41 +441,28 @@ class PageRenderer:
         """Build the content for the home page."""
         return f"""
         <section class="hero">
-          <div class="hero__card hero__card--compact">
-            <div class="hero__badge">
-              <span class="pulse" aria-hidden="true"></span>
-              Live moderation workflow
-            </div>
+        <h1 class="hero__title">
+            Resolve your ban the <span class="shine">right way</span>.
+        </h1>
 
-            <h1 class="hero__title">
-              Resolve your ban the <span class="shine">right way</span>.
-            </h1>
-
-            <p class="hero__sub">
-              Authenticate with Discord or Roblox, review your status, and submit a clear, respectful appeal to BlockSpin moderators.
-            </p>
-
-            <div class="hero__meta">
-              <p class="muted">
-                Use the header actions to log in, then visit the Status page for combined history and the How it works page for step-by-step guidance before submitting.
-              </p>
-            </div>
-          </div>
+        <p class="hero__sub">
+            Sign in with Discord or Roblox, review your status, and submit a clear appeal.
+        </p>
         </section>
-        <section class="grid">
-          <article class="card">
-            <div class="card__top">
-              <h2 class="card__title">Need a refresher?</h2>
-            </div>
-            <p class="muted" style="margin-bottom:16px;">
-              Sign in via the header, then monitor your appeals on the Status page. Link both Discord and Roblox to see a unified timeline and stay in the loop.
-            </p>
-            <div class="btn-row">
-              <a class="btn btn--ghost" href="/status">Visit Status</a>
-              <a class="btn btn--soft" href="/how-it-works">Read how it works</a>
-            </div>
-          </article>
+
+        <section class="card">
+        <h2 class="card__title">Need a refresher?</h2>
+
+        <p class="muted">
+            Check your appeal history and learn how the process works.
+        </p>
+
+        <div class="btn-row">
+            <a class="btn btn--primary" href="/status">Status</a>
+            <a class="btn btn--ghost" href="/how-it-works">How it works</a>
+        </div>
         </section>
+
         """
     
 

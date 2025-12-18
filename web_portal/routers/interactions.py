@@ -98,6 +98,8 @@ async def handle_roblox_initial_decline(parts: list, mod_id: str, mod_name: str,
         return embed, "This appeal has already been processed."
 
     await appeal_db.update_roblox_appeal_moderation_status(appeal_id, "declined", mod_id, mod_name, is_active=False)
+    if appeal.get("internal_user_id"):
+        _appeal_locked[appeal["internal_user_id"]] = True
     
     if appeal.get("discord_user_id"):
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Declined", "description": "Your appeal has been reviewed and declined.", "color": 0xE74C3C})
@@ -121,6 +123,8 @@ async def handle_roblox_final_accept(parts: list, mod_id: str, mod_name: str, em
         return create_updated_embed(embed, "declined", mod_id, "Failed to unban from Roblox via API."), "Roblox API unban failed."
 
     await appeal_db.update_roblox_appeal_moderation_status(appeal_id, "accepted", mod_id, mod_name, is_active=False)
+    if appeal.get("internal_user_id"):
+        _appeal_locked[appeal["internal_user_id"]] = True
     
     if appeal.get("discord_user_id"):
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Accepted", "description": "Your Roblox appeal has been accepted and you have been unbanned.", "color": 0x2ECC71})
@@ -150,6 +154,8 @@ async def handle_roblox_final_decline(parts: list, mod_id: str, mod_name: str, e
         return embed, "This appeal is not pending final review."
 
     await appeal_db.update_roblox_appeal_moderation_status(appeal_id, "declined", mod_id, mod_name, is_active=False)
+    if appeal.get("internal_user_id"):
+        _appeal_locked[appeal["internal_user_id"]] = True
     
     if appeal.get("discord_user_id"):
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Declined", "description": "Your Roblox appeal was declined during final review.", "color": 0xE74C3C})
@@ -163,6 +169,7 @@ async def handle_discord_accept(parts: list, mod_id: str, mod_name: str, embed: 
     _, appeal_id, user_id = parts
     appeal_record = await fetch_appeal_record(appeal_id)
     user_lang = normalize_language((appeal_record or {}).get("user_lang", "en"))
+    internal_user_id = (appeal_record or {}).get("internal_user_id") or user_id
     
     unban_success = await unban_user_from_guild(user_id, TARGET_GUILD_ID)
     readd_success = await add_user_to_guild(user_id, READD_GUILD_ID)
@@ -172,16 +179,18 @@ async def handle_discord_accept(parts: list, mod_id: str, mod_name: str, embed: 
     dm_delivered = await dm_user(user_id, {"title": "Appeal Accepted", "description": accept_desc, "color": 0x2ECC71})
 
     await update_appeal_status(appeal_id, "accepted", mod_id, dm_delivered=dm_delivered)
+    _appeal_locked[internal_user_id] = True
     
     note = f"Unban {'OK' if unban_success else 'Fail'}; Re-add {'OK' if readd_success else 'Fail'}; DM {'OK' if dm_delivered else 'Fail'}."
     return create_updated_embed(embed, "accepted", mod_id, note), None, None
 
 async def handle_discord_decline(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str], Optional[dict]]:
     _, appeal_id, user_id = parts
-    _declined_users[user_id] = True
-    _appeal_locked[user_id] = True
-
     appeal_record = await fetch_appeal_record(appeal_id)
+    internal_user_id = (appeal_record or {}).get("internal_user_id") or user_id
+    _declined_users[internal_user_id] = True
+    _appeal_locked[internal_user_id] = True
+
     user_lang = normalize_language((appeal_record or {}).get("user_lang", "en"))
 
     decline_desc_en = "Your appeal has been reviewed and declined. Further appeals are blocked for this ban."

@@ -203,7 +203,11 @@ async def fetch_appeal_record(appeal_id: str) -> Optional[dict]:
     records = await supabase_request(
         "get",
         SUPABASE_TABLE,
-        params={"appeal_id": f"eq.{appeal_id}", "limit": 1},
+        params={
+            "appeal_id": f"eq.{appeal_id}",
+            "limit": 1,
+            "select": "appeal_id,status,created_at,ban_reason,appeal_reason,internal_user_id,user_id",
+        },
     )
     if records:
         return records[0]

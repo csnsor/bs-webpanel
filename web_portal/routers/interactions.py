@@ -126,8 +126,8 @@ async def handle_roblox_final_accept(parts: list, mod_id: str, mod_name: str, em
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Accepted", "description": "Your Roblox appeal has been accepted and you have been unbanned.", "color": 0x2ECC71})
         
     log_embed = {
-        "title": "Roblox Appeal Accepted (Final Review)",
-        "description": f"Appeal `{appeal_id}` was accepted and unbanned.\nUser: **{appeal['roblox_username']}** ({appeal['roblox_id']})",
+        "title": f"Roblox Appeal Accepted ({appeal_id})",
+        "description": f"**Appealing Player:** {appeal['roblox_username']} ({appeal['roblox_id']})\n**Ban reason:** {appeal['short_ban_reason']}\n**Reason:** {appeal['appeal_text']}",
         "color": 0x2ECC71,
         "fields": [
             {"name": "Moderator", "value": f"<@{mod_id}> ({mod_name})", "inline": False},

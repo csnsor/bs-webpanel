@@ -55,41 +55,37 @@ async def health(request: Request):
     chip = lambda label, ok: f'<span class="status-chip {"accepted" if ok else "declined"}">{label}</span>'
 
     body = f"""
-      <div class="card status-card">
-        <div class="status-heading">
-          <h1>Portal health</h1>
-          <p class="muted">Live status for key services powering appeals.</p>
-        </div>
-        <div class="grid" style="padding:0;">
-          <div class="card" style="background:var(--card-bg-3);">
-            <div class="status-heading">
-              <h3>Discord Bot</h3>
-              {chip(bot_status, online)}
-            </div>
-            <p class="muted small">Tracks bans and posts embeds.</p>
-            <div class="kv">
-              <div class="kv-row"><div class="k">Task</div><div class="v">{bot_task_state}</div></div>
-              <div class="kv-row"><div class="k">Target Guild</div><div class="v">{TARGET_GUILD_ID}</div></div>
-              <div class="kv-row"><div class="k">Message Cache Guild</div><div class="v">{MESSAGE_CACHE_GUILD_ID}</div></div>
-            </div>
+    <div class="card status-card">
+      <h1>System status</h1>
+      <p class="muted">Public health overview of appeal services.</p>
+
+      <div class="grid" style="padding:0;">
+        <div class="card" style="background:var(--card-bg-3);">
+          <div class="status-heading">
+            <h3>Discord integration</h3>
+            {chip(bot_status, online)}
           </div>
-          <div class="card" style="background:var(--card-bg-3);">
-            <div class="status-heading">
-              <h3>Supabase</h3>
-              {chip(supabase_status, data["supabase_ready"])}
-            </div>
-            <p class="muted small">Persists appeals, sessions, and context.</p>
-            <div class="kv">
-              <div class="kv-row"><div class="k">Context table</div><div class="v">{SUPABASE_CONTEXT_TABLE}</div></div>
-              <div class="kv-row"><div class="k">Status</div><div class="v">{supabase_status}</div></div>
-            </div>
-          </div>
+          <p class="muted small">
+            Receives moderation events and updates appeal activity.
+          </p>
         </div>
-        <div class="btn-row" style="margin-top:12px;">
-          <a class="btn secondary" href="/">Back home</a>
-          <a class="btn btn--ghost" href="/status">Appeal status</a>
+
+        <div class="card" style="background:var(--card-bg-3);">
+          <div class="status-heading">
+            <h3>Database</h3>
+            {chip(supabase_status, data["supabase_ready"])}
+          </div>
+          <p class="muted small">
+            Stores appeals and user progress.
+          </p>
         </div>
       </div>
+
+      <div class="btn-row" style="margin-top:16px;">
+        <a class="btn secondary" href="/">Home</a>
+        <a class="btn btn--ghost" href="/status">Appeals</a>
+      </div>
+    </div>
     """
 
     return HTMLResponse(

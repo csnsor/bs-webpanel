@@ -17,6 +17,7 @@ from ..services.discord_api import (
     remove_from_target_guild,
     unban_user_from_guild,
     delete_message,
+    post_channel_message,
 )
 from ..services.interactions import respond_ephemeral_embed, update_message, verify_signature
 from ..services.supabase import fetch_appeal_record, update_appeal_status
@@ -32,6 +33,7 @@ from ..i18n import translate_text
 from ..utils import normalize_language
 
 router = APIRouter()
+FINAL_LOG_CHANNEL_ID = "1353445286457901106"
 
 # --- Helper Functions ---
 
@@ -60,7 +62,7 @@ def create_updated_embed(
 
 # --- Roblox Appeal Handlers ---
 
-async def handle_roblox_initial_accept(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str]]:
+async def handle_roblox_initial_accept(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str], Optional[dict]]:
     appeal_id = int(parts[1])
     appeal = await appeal_db.get_roblox_appeal_by_id(appeal_id)
     if not appeal:
@@ -84,9 +86,9 @@ async def handle_roblox_initial_accept(parts: list, mod_id: str, mod_name: str, 
     # Delete the initial message
     await delete_message(payload["channel_id"], payload["message"]["id"])
 
-    return create_updated_embed(embed, "forwarded", mod_id, "Forwarded for final review."), None
+    return create_updated_embed(embed, "forwarded", mod_id, "Forwarded for final review."), None, None
 
-async def handle_roblox_initial_decline(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str]]:
+async def handle_roblox_initial_decline(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str], Optional[dict]]:
     appeal_id = int(parts[1])
     appeal = await appeal_db.get_roblox_appeal_by_id(appeal_id)
     if not appeal:
@@ -103,9 +105,9 @@ async def handle_roblox_initial_decline(parts: list, mod_id: str, mod_name: str,
     await delete_message(payload["channel_id"], payload["message"]["id"])
     logging.info(f"Roblox appeal {appeal_id} declined by {mod_name} ({mod_id}) and message deleted.")
         
-    return create_updated_embed(embed, "declined", mod_id), None
+    return create_updated_embed(embed, "declined", mod_id), None, None
 
-async def handle_roblox_final_accept(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str]]:
+async def handle_roblox_final_accept(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str], Optional[dict]]:
     appeal_id = int(parts[1])
     appeal = await appeal_db.get_roblox_appeal_by_id(appeal_id)
     if not appeal:
@@ -122,9 +124,23 @@ async def handle_roblox_final_accept(parts: list, mod_id: str, mod_name: str, em
     if appeal.get("discord_user_id"):
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Accepted", "description": "Your Roblox appeal has been accepted and you have been unbanned.", "color": 0x2ECC71})
         
-    return create_updated_embed(embed, "accepted", mod_id, "User unbanned from Roblox."), None
+    log_embed = {
+        "title": "Roblox Appeal Accepted (Final Review)",
+        "description": f"Appeal `{appeal_id}` was accepted and unbanned.\nUser: **{appeal['roblox_username']}** ({appeal['roblox_id']})",
+        "color": 0x2ECC71,
+        "fields": [
+            {"name": "Moderator", "value": f"<@{mod_id}> ({mod_name})", "inline": False},
+        ],
+    }
+    meta = {
+        "delete_message": True,
+        "ephemeral": "Appeal accepted, user unbanned, and review message removed.",
+        "log_channel": FINAL_LOG_CHANNEL_ID,
+        "log_embed": log_embed,
+    }
+    return create_updated_embed(embed, "accepted", mod_id, "User unbanned from Roblox."), None, meta
 
-async def handle_roblox_final_decline(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str]]:
+async def handle_roblox_final_decline(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str], Optional[dict]]:
     appeal_id = int(parts[1])
     appeal = await appeal_db.get_roblox_appeal_by_id(appeal_id)
     if not appeal:
@@ -137,11 +153,12 @@ async def handle_roblox_final_decline(parts: list, mod_id: str, mod_name: str, e
     if appeal.get("discord_user_id"):
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Declined", "description": "Your Roblox appeal was declined during final review.", "color": 0xE74C3C})
         
-    return create_updated_embed(embed, "declined", mod_id), None
+    meta = {"delete_message": True, "ephemeral": "Appeal declined and review message removed."}
+    return create_updated_embed(embed, "declined", mod_id), None, meta
 
 # --- Discord Appeal Handlers (Legacy) ---
 
-async def handle_discord_accept(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str]]:
+async def handle_discord_accept(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str], Optional[dict]]:
     _, appeal_id, user_id = parts
     appeal_record = await fetch_appeal_record(appeal_id)
     user_lang = normalize_language((appeal_record or {}).get("user_lang", "en"))
@@ -156,9 +173,9 @@ async def handle_discord_accept(parts: list, mod_id: str, mod_name: str, embed: 
     await update_appeal_status(appeal_id, "accepted", mod_id, dm_delivered=dm_delivered)
     
     note = f"Unban {'OK' if unban_success else 'Fail'}; Re-add {'OK' if readd_success else 'Fail'}; DM {'OK' if dm_delivered else 'Fail'}."
-    return create_updated_embed(embed, "accepted", mod_id, note), None
+    return create_updated_embed(embed, "accepted", mod_id, note), None, None
 
-async def handle_discord_decline(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str]]:
+async def handle_discord_decline(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str], Optional[dict]]:
     _, appeal_id, user_id = parts
     _declined_users[user_id] = True
     _appeal_locked[user_id] = True
@@ -174,7 +191,7 @@ async def handle_discord_decline(parts: list, mod_id: str, mod_name: str, embed:
     await maybe_remove_from_dm_guild(user_id)
     
     note = f"User has been notified by DM (delivered: {dm_delivered})."
-    return create_updated_embed(embed, "declined", mod_id, note), None
+    return create_updated_embed(embed, "declined", mod_id, note), None, None
 
 # --- Main Interaction Router ---
 
@@ -218,7 +235,7 @@ async def interactions(request: Request):
     original_embed = (payload["message"].get("embeds") or [{}])[0]
 
     try:
-        final_embed, error = await handler(parts, moderator_id, moderator_username, original_embed, payload)
+        final_embed, error, meta = await handler(parts, moderator_id, moderator_username, original_embed, payload)
         if error:
             logging.error(f"Handler for '{action}' failed: {error}")
             # On error, we can send an ephemeral message to the moderator
@@ -230,6 +247,15 @@ async def interactions(request: Request):
         if action == "roblox_initial_decline":
              return await respond_ephemeral_embed("Success", "Appeal has been declined.")
 
+        # If handler requested deletion (final review), delete original message and confirm ephemerally
+        if meta and meta.get("delete_message"):
+            await delete_message(payload["channel_id"], payload["message"]["id"])
+            if meta.get("log_channel") and meta.get("log_embed"):
+                await post_channel_message(meta["log_channel"], embed=meta["log_embed"])
+            return await respond_ephemeral_embed("Success", meta.get("ephemeral", "Action completed."))
+
+        if meta and meta.get("log_channel") and meta.get("log_embed"):
+            await post_channel_message(meta["log_channel"], embed=meta["log_embed"])
 
         return JSONResponse({
             "type": 7, # UPDATE_MESSAGE
@@ -241,5 +267,3 @@ async def interactions(request: Request):
     except Exception as e:
         logging.exception(f"Error processing action '{action}': {e}")
         return await respond_ephemeral_embed("Error", "An unexpected server error occurred.")
-
-

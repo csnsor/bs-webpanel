@@ -830,7 +830,7 @@ class PageRenderer:
             login_prompt = f"""
               <div class="callout callout--info" style="margin-bottom:16px;text-align:center;">
                 <p class="muted" style="margin-bottom:8px;">{html.escape(prompt_text)}</p>
-                <a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}" target="_blank" rel="noopener noreferrer">{html.escape(prompt_cta)}</a>
+                <a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">{html.escape(prompt_cta)}</a>
               </div>
             """
 

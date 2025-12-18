@@ -429,6 +429,19 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.top__actions .btn,
+.top__actions .chip {
+  height: 44px;
+  align-items: center;
+  padding-inline: var(--space-5);
+}
+
+.top__actions .greeting {
+  color: var(--text-primary);
+  font-weight: 700;
 }
 
 /* =============================================================================
@@ -633,6 +646,7 @@ a:hover {
 .hero {
   display: grid;
   grid-template-columns: 1fr;
+  justify-items: center;
   align-items: start;
   gap: var(--space-10);
   padding: var(--space-16) 0 var(--space-12);
@@ -658,6 +672,7 @@ a:hover {
   background: none;
   box-shadow: none;
   padding: 0;
+  width: 100%;
 }
 
 .hero__badge,

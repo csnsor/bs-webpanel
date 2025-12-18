@@ -118,6 +118,27 @@ async def fetch_discord_user(access_token: str) -> dict:
     return resp.json()
 
 
+async def post_channel_message(channel_id: str, *, content: Optional[str] = None, embed: Optional[dict] = None) -> Optional[dict]:
+    """Post a message (optionally with a single embed) to a channel by ID."""
+    payload: dict = {}
+    if content:
+        payload["content"] = content
+    if embed:
+        payload["embeds"] = [embed]
+    client = get_http_client()
+    resp = await client.post(
+        f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
+        headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
+        json=payload,
+    )
+    try:
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        logging.warning("Failed posting to channel %s: %s | body=%s", channel_id, exc, resp.text if hasattr(resp, 'text') else "")
+        return None
+
+
 async def fetch_ban_if_exists(user_id: str) -> Optional[dict]:
     client = get_http_client()
     resp = await client.get(
@@ -480,4 +501,3 @@ async def delete_message(channel_id: str, message_id: str) -> bool:
     except Exception as exc:
         logging.exception(f"An unexpected error occurred while deleting message {message_id}: {exc}")
         return False
-

@@ -211,8 +211,9 @@ a:hover {
    ============================================================================= */
 
 .wrap {
-  width: min(1120px, calc(100% - 40px));
+  width: min(1240px, calc(100% - 48px));
   margin: 0 auto;
+  padding-inline: 4px;
 }
 
 .app {
@@ -295,8 +296,9 @@ a:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-7);
+  gap: var(--space-6);
   padding: var(--space-7) 0;
+  flex-wrap: wrap;
 }
 
 /* =============================================================================
@@ -626,9 +628,10 @@ a:hover {
 
 .hero {
   display: grid;
-  grid-template-columns: 1.25fr 0.75fr;
-  gap: var(--space-8);
-  padding: var(--space-12) 0 var(--space-8);
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  align-items: start;
+  gap: var(--space-10);
+  padding: var(--space-16) 0 var(--space-12);
 }
 
 .hero-card {
@@ -651,6 +654,7 @@ a:hover {
   background: none;
   box-shadow: none;
   padding: 0;
+  max-width: 860px;
 }
 
 .hero__badge,
@@ -684,12 +688,13 @@ a:hover {
   font-size: var(--font-5xl);
   letter-spacing: var(--tracking-tighter);
   line-height: var(--leading-tight);
+  max-width: 760px;
 }
 
 .hero__sub,
 .hero-sub {
   margin: 0;
-  max-width: 62ch;
+  max-width: 720px;
   color: var(--text-muted);
   font-size: var(--font-lg);
   line-height: var(--leading-loose);
@@ -950,14 +955,15 @@ a:hover {
 
 .grid {
   display: grid;
-  grid-template-columns: 1.1fr 0.9fr;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  align-items: start;
   gap: var(--space-8);
-  padding: var(--space-4) 0 var(--space-12);
+  padding: var(--space-6) 0 var(--space-12);
 }
 
 .grid-2 {
   display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: var(--space-8);
   padding: var(--space-8) 0 var(--space-12);
 }

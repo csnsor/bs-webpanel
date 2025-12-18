@@ -963,28 +963,55 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
     state_data = auth_data.get("state_data", {})
     return_to = state_data.get("return_to")
     ip = auth_data["ip"]
+    linking_roblox_id = state_data.get("roblox_id")
+    linking_roblox_name = state_data.get("roblox_username")
+    linking_internal = state_data.get("internal_user_id")
+    linking_roblox = bool(state_data.get("linking_roblox"))
 
     uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
     display_name = clean_display_name(user.get("global_name") or user.get("username") or uname_label)
 
-    # Account Linking Flow
-    if existing_session and existing_session.get("internal_user_id"):
+    # Account Linking Flow (existing session or state-carried Roblox context)
+    if (existing_session and existing_session.get("internal_user_id")) or linking_roblox:
         response = RedirectResponse(return_to or "/status")
         internal_user_id = await resolve_internal_user_id(
             discord_id=user["id"],
-            roblox_id=existing_session.get("ruid"),
-            current_id=existing_session["internal_user_id"],
+            roblox_id=existing_session.get("ruid") if existing_session else linking_roblox_id,
+            current_id=(existing_session or {}).get("internal_user_id") or linking_internal,
         )
 
-        update_session_with_platform(
-            response,
-            existing_session,
-            "discord",
-            user["id"],
-            uname_label,
-            display_name,
-            internal_user_id=internal_user_id,
-        )
+        # If we lost the original session (e.g., different tab), rebuild it from state
+        if not existing_session:
+            session = persist_session(
+                response,
+                internal_user_id=internal_user_id,
+                platform_type="discord",
+                platform_id=user["id"],
+                username=uname_label,
+                display_name=display_name,
+            )
+        else:
+            session = update_session_with_platform(
+                response,
+                existing_session,
+                "discord",
+                user["id"],
+                uname_label,
+                display_name,
+                internal_user_id=internal_user_id,
+            )
+
+        # Attach Roblox side if provided in state (fixes link loop when cookies weren't carried)
+        if linking_roblox and linking_roblox_id:
+            update_session_with_platform(
+                response,
+                session,
+                "roblox",
+                linking_roblox_id,
+                linking_roblox_name or "Roblox",
+                display_name,
+                internal_user_id=internal_user_id,
+            )
         return response
 
     # Standard Login/Appeal Flow
@@ -1164,6 +1191,11 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         "lang": current_lang,
         "state_id": issue_state_token(auth_data["ip"]),
         "return_to": f"/roblox/resume?lang={current_lang}",
+        # Carry Roblox context so Discord callback can rebuild session if cookies are missing
+        "linking_roblox": True,
+        "roblox_id": user_id,
+        "roblox_username": uname_label,
+        "internal_user_id": internal_user_id,
     })
     discord_login_url = None
     if not updated_session_for_roblox_context.get("uid"):

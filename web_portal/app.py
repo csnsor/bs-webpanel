@@ -5,12 +5,13 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .bot import bot_client, heartbeat, run_bot_forever
 from .clients import close_http_clients, init_http_client
@@ -83,12 +84,20 @@ def create_app() -> FastAPI:
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
         return response
 
-    @app.exception_handler(HTTPException)
-    async def http_exception_handler(request: Request, exc: HTTPException):
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         if wants_html(request):
-            msg = exc.detail if isinstance(exc.detail, str) else "Something went wrong."
             lang = await detect_language(request)
             strings = await get_strings(lang)
+            if exc.status_code == 404:
+                return render_error(
+                    "Page not found",
+                    "We couldn't find that page. Check the link or return home.",
+                    status_code=404,
+                    lang=lang,
+                    strings=strings,
+                )
+            msg = exc.detail if isinstance(exc.detail, str) else "Something went wrong."
             return render_error("Request failed", msg, status_code=exc.status_code, lang=lang, strings=strings)
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 

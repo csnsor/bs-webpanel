@@ -114,7 +114,6 @@ async def _collect_combined_history(session: Optional[Dict[str, Any]]) -> List[D
                 "ban_reason": rec.get("ban_reason"),
                 "appeal_reason": rec.get("appeal_reason"),
                 "moderator": rec.get("moderator_username") or rec.get("decision_by"),
-                "resolution": rec.get("notes") or rec.get("resolution_reason"),
             }
         )
 
@@ -131,7 +130,6 @@ async def _collect_combined_history(session: Optional[Dict[str, Any]]) -> List[D
                 "ban_reason": short_reason,
                 "appeal_reason": rec.get("appeal_text"),
                 "moderator": rec.get("moderator_username") or rec.get("moderator_id"),
-                "resolution": rec.get("resolution_reason") or rec.get("notes"),
             }
         )
 

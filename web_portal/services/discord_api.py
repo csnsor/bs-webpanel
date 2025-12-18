@@ -376,6 +376,7 @@ async def post_roblox_final_appeal_embed(
     roblox_id: str,
     appeal_reason: str,
     initial_moderator_id: str,
+    short_ban_reason: Optional[str] = None,
 ) -> Optional[dict]:
     """Posts the final Roblox appeal embed for elevated moderation."""
     embed = {
@@ -383,6 +384,7 @@ async def post_roblox_final_appeal_embed(
         "color": 0xFF0000,  # Red for Roblox
         "description": (
             f"**User:** {roblox_username} (Roblox ID: {roblox_id})\n"
+            f"**Ban reason:** {short_ban_reason or 'N/A'}\n"
             f"**Appeal:** {appeal_reason}\n\n"
             f"Forwarded for final approval by <@{initial_moderator_id}>."
         ),

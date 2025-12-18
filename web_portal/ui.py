@@ -32,7 +32,6 @@ HISTORY_TEMPLATE = JINJA_ENV.from_string(
     <div class="meta"><strong>Reference:</strong> {{ item.get("appeal_id") or "-" }}</div>
     <div class="meta"><strong>Submitted:</strong> {{ format_timestamp(item.get("created_at") or "") }}</div>
     <div class="meta"><strong>Moderator:</strong> {{ item.get("moderator") or "Pending review" }}</div>
-    <div class="meta"><strong>Resolution:</strong> {{ item.get("resolution") or "No resolution details recorded." }}</div>
     <div class="meta"><strong>Ban reason:</strong> {{ item.get("ban_reason") or "No ban reason recorded." }}</div>
     <div class="meta"><strong>Appeal:</strong> {{ item.get("appeal_reason") or "No appeal reason captured." }}</div>
   </li>

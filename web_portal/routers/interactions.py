@@ -78,6 +78,7 @@ async def handle_roblox_initial_accept(parts: list, mod_id: str, mod_name: str, 
         roblox_id=appeal["roblox_id"],
         appeal_reason=appeal["appeal_text"],
         initial_moderator_id=mod_id,
+        short_ban_reason=appeal.get("short_ban_reason"),
     )
 
     if new_message and new_message.get("id"):

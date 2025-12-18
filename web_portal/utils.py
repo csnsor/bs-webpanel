@@ -98,11 +98,19 @@ def wants_html(request: Request) -> bool:
 
 def shorten_public_ban_reason(reason: str) -> str:
     rl = (reason or "").lower()
+
+    # Check anti-cheat first
+    if any(k in rl for k in ("automatic", "further", "anti-cheat", "anticheat")):
+        return "Exploiting [Anti-Cheat]"
+
     if "you created or used an account" in rl:
         return "Alt Account"
-    if any(k in rl for k in ("cheating", "further", "exploiting", "automatic")):
+
+    if any(k in rl for k in ("cheating", "exploiting")):
         return "Exploiting"
+
     if any(k in rl for k in ("bm", "bye", "scam", "economy", "black", "cross-trading", "cross")):
         return "Economy"
+
     return "Other"
 

@@ -163,66 +163,68 @@ if discord:
             print(f"[DEBUG] RAM Cache for {message.author.name}: {len(_message_buffer[user_id])} messages stored.")
         await maybe_snapshot_messages(user_id, str(message.guild.id))
 
-        # Admin-only health check command
-        content_lower = (message.content or "").strip().lower()
-        if content_lower.startswith("!appeal_health"):
-            perms = getattr(message.author.guild_permissions, "administrator", False)
-            if not perms:
+        # Administrator-only system health command
+        content = (message.content or "").strip().lower()
+        if content.startswith("!appeal_health"):
+            if not getattr(message.author.guild_permissions, "administrator", False):
                 return
+
             start = time.perf_counter()
+
+            # Discord gateway status
             bot_ready = bool(bot_client and getattr(bot_client, "is_ready", lambda: False)())
             latency_ms = None
             try:
-                if bot_client and getattr(bot_client, "latency", None) is not None:
-                    latency_ms = int(float(bot_client.latency) * 1000)
+                if bot_client and bot_client.latency is not None:
+                    latency_ms = round(float(bot_client.latency) * 1000)
             except Exception:
                 latency_ms = None
 
+            # Database status
             supabase_ok = is_supabase_ready()
+
+            # Background worker state
             try:
                 if _bot_task is None:
-                    task_state = "not_started"
+                    worker_state = "not started"
                 elif _bot_task.cancelled():
-                    task_state = "cancelled"
+                    worker_state = "cancelled"
                 elif _bot_task.done():
-                    task_state = "done"
+                    worker_state = "stopped"
                 else:
-                    task_state = "running"
+                    worker_state = "running"
             except Exception:
-                task_state = "unknown"
+                worker_state = "unknown"
 
-            elapsed_ms = int((time.perf_counter() - start) * 1000)
-            color = 0x2ECC71 if bot_ready and supabase_ok else 0xE67E22 if bot_ready or supabase_ok else 0xE74C3C
+            elapsed_ms = round((time.perf_counter() - start) * 1000)
+
+            # Overall health color
+            if bot_ready and supabase_ok:
+                color = 0x2ECC71  # healthy
+            elif bot_ready or supabase_ok:
+                color = 0xE67E22  # degraded
+            else:
+                color = 0xE74C3C  # unhealthy
+
+            latency_display = f"{latency_ms} ms" if latency_ms is not None else "n/a"
+
+            description = (
+                f"**Discord Gateway:** {'Online' if bot_ready else 'Offline'} ({latency_display})\n"
+                f"**Database:** {'Ready' if supabase_ok else 'Unavailable'}\n"
+                f"**Worker State:** {worker_state}\n"
+                f"**Response Time:** {elapsed_ms} ms"
+            )
+
             try:
                 embed = discord.Embed(
-                    title="Appeal Health",
-                    description="Admin-only snapshot (public-safe fields).",
+                    title="Appeals System Health",
+                    description=description,
                     color=color,
                     timestamp=datetime.now(timezone.utc),
                 )
-                embed.add_field(
-                    name="Discord Gateway",
-                    value=f"{'Online' if bot_ready else 'Offline'} ({latency_ms if latency_ms is not None else 'n/a'} ms)",
-                    inline=False,
-                )
-                embed.add_field(
-                    name="Database",
-                    value="Ready" if supabase_ok else "Unavailable",
-                    inline=False,
-                )
-                embed.add_field(
-                    name="Worker",
-                    value=task_state,
-                    inline=False,
-                )
-                embed.add_field(
-                    name="Process Time",
-                    value=f"{elapsed_ms} ms",
-                    inline=False,
-                )
                 await message.channel.send(embed=embed)
             except Exception as exc:
-                logging.warning("Failed to send appeal health embed: %s", exc)
+                logging.warning("Failed to send system health embed: %s", exc)
 
     @bot_client.event
     async def on_member_ban(guild, user):

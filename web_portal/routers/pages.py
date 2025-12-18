@@ -445,9 +445,7 @@ class PageRenderer:
             Resolve your ban the <span class="shine">right way</span>.
         </h1>
 
-        <p class="hero__sub">
-            Check your appeal status and understand the process.
-        </p>
+
         </section>
 
         <section class="card card--wide">
@@ -456,16 +454,12 @@ class PageRenderer:
         <p class="muted">
             Appeals are handled through a single account that links your Discord and
             Roblox identities. You can connect either one first — everything is merged
-            automatically.
-        </p>
-
-        <p class="muted">
-            Once linked, you can submit appeals, track updates, and review moderator
+            automatically. Once linked, you can submit appeals, track updates, and review moderator
             decisions in one place.
         </p>
 
         <div class="btn-row" style="margin-top:16px;">
-            <a class="btn btn--primary" href="/status">View appeal status</a>
+            <a class="btn btn--ghost" href="/status">View appeal status</a>
             <a class="btn btn--ghost" href="/how-it-works">Learn more</a>
         </div>
         </section>

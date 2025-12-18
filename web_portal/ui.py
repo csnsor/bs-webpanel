@@ -100,6 +100,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
               <a class="nav__link" href="/how-it-works">How it works</a>
               <a class="nav__link" href="/tos">Terms</a>
               <a class="nav__link" href="/privacy">Privacy</a>
+              <a class="nav__link" href="/status">Appeal Status</a>
               <a class="nav__link nav__link--muted" href="{INVITE_LINK}" rel="noreferrer">Discord</a>
             </nav>
 
@@ -172,7 +173,6 @@ def build_user_chip(
     if has_discord and has_roblox:
         buttons.append("<span class='chip chip--ok'>Accounts Linked</span>")
 
-    buttons.append("<a class='btn btn--primary' href='/status'>Appeal Status</a>")
     buttons.append("<a class='btn btn--ghost' href='/logout'>Logout</a>")
 
     return f'<div class="top__actions">{" ".join(buttons)}</div>'

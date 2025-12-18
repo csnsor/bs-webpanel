@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import secrets
 import time
+import json
 from typing import Dict, List, Optional
 
 from fastapi import Request
@@ -12,7 +13,7 @@ from .clients import JINJA_ENV
 from .i18n import LANG_STRINGS
 from .settings import INVITE_LINK
 from .utils import clean_display_name, normalize_language
-from .state import _announcement_text
+from . import state
 
 HISTORY_TEMPLATE = JINJA_ENV.from_string(
     """
@@ -68,13 +69,42 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     )
     favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%237c5cff'/%3E%3Cpath d='M42 10 28 24l4 4-6 6 4 4-6 6-6-6 6-6-4-4 6-6 4 4 6-6 4 4 6-6-10-10Z' fill='white'/%3E%3C/svg%3E"
     announcement_html = ""
-    if _announcement_text:
+    current_announcement = getattr(state, "_announcement_text", None)
+    current_epoch = getattr(state, "_session_epoch", 0)
+    announce_block = f"window.BS_ANNOUNCE = {json.dumps({'text': current_announcement, 'epoch': current_epoch})};"
+    if current_announcement:
         announcement_html = f"""
         <div class="announcement">
           <div class="announcement__dot"></div>
-          <div class="announcement__text">{html.escape(_announcement_text)}</div>
+          <div class="announcement__text">{html.escape(current_announcement)}</div>
         </div>
         """
+    live_script = """
+      (function(){
+        const banner = document.getElementById("live-announcement");
+        let local = (window.BS_ANNOUNCE || {epoch:0,text:null});
+        function render(text) {
+          if (!banner) return;
+          if (!text) { banner.innerHTML = ""; return; }
+          banner.innerHTML = '<div class="announcement"><div class="announcement__dot"></div><div class="announcement__text">'+text+'</div></div>';
+        }
+        render(local.text);
+        async function tick(){
+          try{
+            const resp = await fetch('/live/announcement',{headers:{'Accept':'application/json'}});
+            if(!resp.ok) return;
+            const data = await resp.json();
+            if(typeof data.epoch === 'number' && data.epoch > (local.epoch||0)){
+              window.location.reload();
+              return;
+            }
+            local = {epoch:data.epoch||local.epoch,text:data.announcement||null};
+            render(local.text);
+          }catch(e){}
+        }
+        setInterval(tick, 10000);
+      })();
+    """
     return f"""
     <!DOCTYPE html>
     <html lang="{lang}">
@@ -126,7 +156,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         </header>
 
         <main class="wrap">
-          {announcement_html}
+          <div id="live-announcement">{announcement_html}</div>
           {body_html}
 
           <footer class="footer">
@@ -143,7 +173,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
           </footer>
         </main>
 
-        <script nonce="{script_nonce}">{full_script}</script>
+        <script nonce="{script_nonce}">{announce_block}{full_script}{live_script}</script>
       </body>
     </html>
     """

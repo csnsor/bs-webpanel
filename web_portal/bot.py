@@ -16,6 +16,7 @@ from .settings import (
     MESSAGE_CACHE_GUILD_ID,
     SUPABASE_CONTEXT_TABLE,
 )
+import web_portal.state as state
 from .state import _message_buffer, _recent_message_context
 from .utils import uid
 
@@ -230,13 +231,7 @@ if discord:
             if not getattr(message.author.guild_permissions, "administrator", False):
                 return
             try:
-                # Bump session epoch to invalidate all cookies
-                from .state import _session_epoch as session_epoch  # type: ignore
-                session_epoch += 1
-                # write back
-                import importlib
-                state_module = importlib.import_module("web_portal.state")
-                state_module._session_epoch = session_epoch
+                state._session_epoch += 1
 
                 embed = discord.Embed(
                     title="Global logout",
@@ -244,7 +239,7 @@ if discord:
                     color=0xE67E22,
                     timestamp=datetime.now(timezone.utc),
                 )
-                embed.add_field(name="Session epoch", value=str(session_epoch), inline=False)
+                embed.add_field(name="Session epoch", value=str(state._session_epoch), inline=False)
                 await message.channel.send(embed=embed)
             except Exception as exc:
                 logging.warning("Failed to force logout all: %s", exc)
@@ -255,13 +250,11 @@ if discord:
             parts = (message.content or "").split(" ", 1)
             announce_text = parts[1].strip() if len(parts) > 1 else ""
             try:
-                import importlib
-                state_module = importlib.import_module("web_portal.state")
                 if announce_text.lower() == "clear":
-                    state_module._announcement_text = None
+                    state._announcement_text = None
                     await message.channel.send("Appeals announcement cleared.")
                 elif announce_text:
-                    state_module._announcement_text = announce_text
+                    state._announcement_text = announce_text
                     await message.channel.send("Appeals announcement set.")
                 else:
                     await message.channel.send("Usage: !appeals_announce <content|CLEAR>")

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Request
 from ..services.sessions import read_user_session
 from ..services.supabase import fetch_appeal_history, is_supabase_ready
 from ..settings import STATUS_DATA_CACHE_TTL_SECONDS
-from ..state import _status_data_cache
+from ..state import _status_data_cache, _announcement_text, _session_epoch
 from ..utils import format_timestamp
 
 router = APIRouter()
@@ -45,3 +45,10 @@ async def status_data(request: Request):
     _status_data_cache[uid_str] = (payload, now)
     return payload
 
+
+@router.get("/live/announcement")
+async def live_announcement():
+    return {
+        "announcement": _announcement_text,
+        "epoch": _session_epoch,
+    }

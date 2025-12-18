@@ -74,6 +74,15 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="color-scheme" content="dark" />
         <title>{html.escape(title)}</title>
+        <meta property="og:type" content="website" />
+        <meta property="og:title" content="BlockSpin Appeals" />
+        <meta property="og:description" content="Link Discord + Roblox, see unified appeal history, and submit your ban appeal to BlockSpin moderators." />
+        <meta property="og:url" content="https://bs-appeals.up.railway.app" />
+        <meta property="og:image" content="https://bs-appeals.up.railway.app/static/og-banner.png" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="BlockSpin Appeals" />
+        <meta name="twitter:description" content="Link Discord + Roblox, see unified appeal history, and submit your ban appeal to BlockSpin moderators." />
+        <meta name="twitter:image" content="https://bs-appeals.up.railway.app/static/og-banner.png" />
         <link rel="icon" type="image/svg+xml" href="{favicon}">
         <meta http-equiv="Content-Security-Policy" content="{csp}">
         <link rel="stylesheet" href="/static/styles.css">

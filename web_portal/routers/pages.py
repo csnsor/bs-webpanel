@@ -663,33 +663,39 @@ class PageRenderer:
         )
 
         content = f"""
-        <section class="hero hero__card--compact">
-          <div class="hero__card hero__card--compact">
+        <section class="hero hero--home">
+          <div class="hero__card hero__card--compact" style="text-align:center;">
             <h1>{html.escape(strings.get("how_it_works", "How it works"))}</h1>
             <p class="muted">Link either account, follow the clear appeal flow, and keep all moderators informed.</p>
           </div>
         </section>
-        <section class="grid grid--stacked">
-          <article class="card">
-            <h2>1. Authenticate</h2>
+
+        <section class="grid grid-steps">
+          <article class="card step-card">
+            <div class="step-kicker">1</div>
+            <h2>Authenticate</h2>
             <p class="muted">Start by signing in with Discord or Roblox. Each login seeds the internal user record.</p>
           </article>
-          <article class="card">
-            <h2>2. Link both accounts</h2>
+          <article class="card step-card">
+            <div class="step-kicker">2</div>
+            <h2>Link both accounts</h2>
             <p class="muted">Connect your other platform from the header actions or live prompts so appeals merge seamlessly.</p>
           </article>
-          <article class="card">
-            <h2>3. Check status</h2>
+          <article class="card step-card">
+            <div class="step-kicker">3</div>
+            <h2>Check status</h2>
             <p class="muted">Use the Status page to review every appeal tied to your linked accounts, including moderator decisions and status updates.</p>
           </article>
-          <article class="card">
-            <h2>4. Submit respectfully</h2>
+          <article class="card step-card">
+            <div class="step-kicker">4</div>
+            <h2>Submit respectfully</h2>
             <p class="muted">Once both accounts are linked, choose the correct form, explain the context, and commit to improved behaviour.</p>
           </article>
-          <div class="btn-row" style="flex-wrap:wrap; gap:10px;">
-            <a class="btn" href="/status">{html.escape(strings.get("status_cta", "Track my appeal"))}</a>
-            <a class="btn btn--ghost" href="/">{strings.get("error_home")}</a>
-          </div>
+        </section>
+
+        <section class="hero-actions" style="justify-content:center; margin-top:12px;">
+          <a class="btn" href="/status">{html.escape(strings.get("status_cta", "Track my appeal"))}</a>
+          <a class="btn btn--ghost" href="/">{strings.get("error_home")}</a>
         </section>
         """
 

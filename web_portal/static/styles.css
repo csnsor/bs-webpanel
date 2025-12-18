@@ -1053,6 +1053,34 @@ a:hover {
   padding: var(--space-6) 0 var(--space-12);
 }
 
+.grid-steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--space-6);
+  padding: var(--space-8) 0;
+}
+
+.step-card {
+  position: relative;
+  padding: var(--space-9);
+  background: linear-gradient(145deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  border: 1px solid var(--border-color-2);
+  box-shadow: var(--shadow-sm);
+}
+
+.step-kicker {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  margin-bottom: var(--space-4);
+  background: var(--card-bg);
+}
+
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));

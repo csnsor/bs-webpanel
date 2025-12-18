@@ -270,11 +270,11 @@ class AppealService:
         return await is_session_token_used(session_hash)
     
     @staticmethod
-    async def mark_session_used(session_hash: str, identity_key: str):
+    async def mark_session_used(session_hash: str, identity_key: str, *, network_info: Optional[dict] = None, other_info: Optional[dict] = None):
         """Mark session as used (tracks by canonical identity to avoid cross-platform dupes)."""
         now = time.time()
         _used_sessions[session_hash] = now
-        await mark_session_token(session_hash, identity_key, now)
+        await mark_session_token(session_hash, identity_key, now, network_info=network_info, other_info=other_info)
         
         # Clean up stale sessions
         stale_sessions = [token for token, ts in _used_sessions.items() if now - ts > SESSION_TTL_SECONDS * 2]
@@ -345,7 +345,15 @@ class AuthService:
         user_id = user["sub"]
         
         # Now that we have the user_id, we can properly store the token
-        await roblox_api.store_roblox_token(user_id, token)
+        net_info = {
+            "ip": get_client_ip(request),
+            "forwarded_for": request.headers.get("X-Forwarded-For", ""),
+        }
+        other_info = {
+            "user_agent": request.headers.get("User-Agent", "unknown"),
+            "path": str(request.url.path),
+        }
+        await roblox_api.store_roblox_token(user_id, token, network_info=net_info, other_info=other_info)
 
         ip = get_client_ip(request)
         asyncio.create_task(send_log_message(f"[auth_roblox] user={user_id} ip_hash={hash_ip(ip)} lang={current_lang}"))
@@ -1478,6 +1486,8 @@ async def roblox_submit(
         raise HTTPException(status_code=409, detail="This appeal was already submitted.")
 
     ip = get_client_ip(request)
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    user_agent = request.headers.get("User-Agent", "unknown")
     enforce_ip_rate_limit(ip)
     
     eligible, reason = await AppealService.check_rate_limit(
@@ -1534,7 +1544,12 @@ async def roblox_submit(
             discord_channel_id=message["channel_id"],
         )
 
-    await AppealService.mark_session_used(token_hash, internal_user_id)
+    await AppealService.mark_session_used(
+        token_hash,
+        internal_user_id,
+        network_info={"ip": ip, "forwarded_for": forwarded_for},
+        other_info={"user_agent": user_agent, "path": str(request.url.path)},
+    )
     _appeal_locked[internal_user_id] = True # Use internal_user_id for appeal locked state
     
     current_lang = data.get("lang", "en")
@@ -1659,7 +1674,12 @@ async def submit(
     )
     
     # Mark session as used and lock appeal
-    await AppealService.mark_session_used(token_hash, internal_user_id)
+    await AppealService.mark_session_used(
+        token_hash,
+        internal_user_id,
+        network_info={"ip": ip, "forwarded_for": forwarded_for},
+        other_info={"user_agent": user_agent, "path": str(request.url.path)},
+    )
     _appeal_locked[internal_user_id] = True # Use internal_user_id for appeal locked state
     
     

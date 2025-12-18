@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import json
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -85,7 +86,7 @@ async def refresh_roblox_token(user_id: str, refresh_token: str) -> Optional[dic
         return None
 
 
-async def store_roblox_token(user_id: str, token_data: dict):
+async def store_roblox_token(user_id: str, token_data: dict, *, network_info: Optional[dict] = None, other_info: Optional[dict] = None):
     """Stores a Roblox token in the database."""
     expires_in = token_data.get("expires_in", 0)
     payload = {
@@ -95,6 +96,16 @@ async def store_roblox_token(user_id: str, token_data: dict):
         "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if network_info:
+        try:
+            payload["network_info"] = json.dumps(network_info, ensure_ascii=False)
+        except Exception:
+            payload["network_info"] = None
+    if other_info:
+        try:
+            payload["other_info"] = json.dumps(other_info, ensure_ascii=False)
+        except Exception:
+            payload["other_info"] = None
     await supabase_request("post", ROBLOX_OAUTH_TOKENS_TABLE, payload=payload, prefer="resolution=merge-duplicates")
 
     

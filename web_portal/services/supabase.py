@@ -6,6 +6,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
+import json
 
 import httpx
 
@@ -238,8 +239,34 @@ async def is_session_token_used(token_hash: str) -> bool:
     return bool(recs)
 
 
-async def mark_session_token(token_hash: str, user_id: str, ts: float) -> None:
-    payload = {"token_hash": token_hash, "user_id": user_id, "last_submit": int(ts)}
+def _json_text(data: Optional[dict]) -> Optional[str]:
+    if not data:
+        return None
+    try:
+        return json.dumps(data, ensure_ascii=False)
+    except Exception:
+        return None
+
+
+async def mark_session_token(
+    token_hash: str,
+    user_id: str,
+    ts: float,
+    *,
+    network_info: Optional[dict] = None,
+    other_info: Optional[dict] = None,
+) -> None:
+    payload = {
+        "token_hash": token_hash,
+        "user_id": user_id,
+        "last_submit": int(ts),
+    }
+    net_text = _json_text(network_info)
+    oth_text = _json_text(other_info)
+    if net_text:
+        payload["network_info"] = net_text
+    if oth_text:
+        payload["other_info"] = oth_text
     await supabase_request(
         "post",
         SUPABASE_SESSION_TABLE,

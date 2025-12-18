@@ -428,20 +428,42 @@ a:hover {
 .top__actions {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
+  gap: var(--space-3);
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .top__actions .btn,
 .top__actions .chip {
-  height: 44px;
+  height: 40px;
   align-items: center;
-  padding-inline: var(--space-5);
+  padding-inline: var(--space-4);
+  font-size: 14px;
 }
 
 .top__actions .greeting {
-  color: var(--text-primary);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.top__actions .chip {
+  background: rgba(46, 204, 113, 0.15);
+  color: #2ecc71;
+  font-weight: 600;
+}
+
+.top__actions .btn--primary {
   font-weight: 700;
+}
+
+.top__actions .btn:not(.btn--primary) {
+  opacity: 0.85;
+}
+
+@media (max-width: 900px) {
+  .top__actions .greeting {
+    display: none;
+  }
 }
 
 /* =============================================================================

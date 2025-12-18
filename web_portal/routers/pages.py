@@ -441,67 +441,31 @@ class PageRenderer:
         """Build the content for the home page."""
         return f"""
         <section class="hero">
-          <div class="hero__card hero__card--compact">
-            <div class="hero__badge">
-              <span class="pulse" aria-hidden="true"></span>
-              Live moderation workflow
-            </div>
+        <h1 class="hero__title">
+            Resolve your ban the <span class="shine">right way</span>.
+        </h1>
 
-            <h1 class="hero__title">
-              Resolve your ban the <span class="shine">right way</span>.
-            </h1>
+        <p class="hero__sub">
+            Sign in, check your status, and submit an appeal.
+        </p>
 
-            <p class="hero__sub">
-              Sign in with Discord or Roblox, review your status, and submit a clear appeal.
-            </p>
-
-            <div class="btn-row" style="margin-top:var(--space-6);">
-              <a class="btn btn--primary" href="{discord_login_url}">Login with Discord</a>
-              <a class="btn btn--roblox" href="{roblox_login_url}">Login with Roblox</a>
-              <a class="btn btn--ghost" href="/status">View status</a>
-            </div>
-          </div>
+        <div class="btn-row">
+            <a class="btn btn--primary" href="{discord_login_url}">Discord</a>
+            <a class="btn btn--roblox" href="{roblox_login_url}">Roblox</a>
+            <a class="btn btn--ghost" href="/status">Status</a>
+        </div>
         </section>
 
-        <section class="grid">
-          <article class="card">
-            <div class="card__top">
-              <h2 class="card__title">Link both accounts</h2>
-            </div>
-            <p class="muted" style="margin-bottom:16px;">
-              Connect Discord and Roblox in any order. We merge your internal record so every appeal and moderator decision stays in one place.
-            </p>
-            <div class="btn-row">
-              <a class="btn btn--ghost" href="/how-it-works">See the flow</a>
-              <a class="btn btn--soft" href="/status">Go to status</a>
-            </div>
-          </article>
+        <section class="card">
+        <h2 class="card__title">How it works</h2>
+        <p class="muted">
+            You can link Discord and Roblox in any order. Appeals and decisions appear
+            in one place.
+        </p>
 
-          <article class="card">
-            <div class="card__top">
-              <h2 class="card__title">Stay appeal-ready</h2>
-            </div>
-            <ul class="list" style="margin-top: var(--space-2);">
-              <li class="row">
-                <div class="row__left">
-                  <span class="pill pill--ok">One identity</span>
-                  <span class="muted">Internal user ID keeps Roblox + Discord together.</span>
-                </div>
-              </li>
-              <li class="row">
-                <div class="row__left">
-                  <span class="pill pill--wait">Live updates</span>
-                  <span class="muted">Status changes and decisions sync to your timeline.</span>
-                </div>
-              </li>
-              <li class="row">
-                <div class="row__left">
-                  <span class="pill pill--ok">Transparent history</span>
-                  <span class="muted">See every submission, moderator, and resolution reason.</span>
-                </div>
-              </li>
-            </ul>
-          </article>
+        <div class="btn-row">
+            <a class="btn btn--ghost" href="/how-it-works">Learn more</a>
+        </div>
         </section>
 
         """

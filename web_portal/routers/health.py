@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 from ..bot import bot_client
 from ..i18n import detect_language, get_strings
 from ..services.supabase import is_supabase_ready
-from ..settings import MESSAGE_CACHE_GUILD_ID, SUPABASE_CONTEXT_TABLE, TARGET_GUILD_ID
 from ..state import _bot_task
 from ..ui import render_page
 from ..utils import wants_html
@@ -37,10 +38,8 @@ async def health(request: Request):
         "ok": True,
         "bot_online": online,
         "bot_task": bot_task_state,
-        "target_guild_id": TARGET_GUILD_ID,
-        "message_cache_guild_id": MESSAGE_CACHE_GUILD_ID,
         "supabase_ready": is_supabase_ready(),
-        "supabase_context_table": SUPABASE_CONTEXT_TABLE,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
     # If caller prefers JSON (monitoring/uptime checks), return early
@@ -52,34 +51,54 @@ async def health(request: Request):
 
     bot_status = "Healthy" if online else "Offline"
     supabase_status = "Ready" if data["supabase_ready"] else "Unavailable"
-    chip = lambda label, ok: f'<span class="status-chip {"accepted" if ok else "declined"}">{label}</span>'
+
+    def chip(label: str, state: str) -> str:
+        cls = "accepted" if state == "up" else "pending" if state == "degraded" else "declined"
+        return f'<span class="status-chip {cls}">{label}</span>'
+
+    status_cards = [
+        {
+            "title": "Discord integration",
+            "state": "up" if online else "down",
+            "label": bot_status,
+            "body": "Receives moderation events and updates appeal activity.",
+        },
+        {
+            "title": "Database connectivity",
+            "state": "up" if data["supabase_ready"] else "down",
+            "label": supabase_status,
+            "body": "Stores appeals and submission state.",
+        },
+        {
+            "title": "Bot background task",
+            "state": "up" if bot_task_state == "running" else "degraded" if bot_task_state in ("not_started", "done") else "down",
+            "label": bot_task_state or "Unknown",
+            "body": "Background worker that processes events.",
+        },
+    ]
+
+    cards_html = ""
+    for item in status_cards:
+        cards_html += f"""
+        <div class="card" style="background:var(--card-bg-3);">
+          <div class="status-heading" style="display:flex;align-items:center;justify-content:space-between;">
+            <h3>{item['title']}</h3>
+            {chip(item['label'], item['state'])}
+          </div>
+          <p class="muted small">{item['body']}</p>
+        </div>
+        """
 
     body = f"""
     <div class="card status-card">
       <h1>System status</h1>
-      <p class="muted">Public health overview of appeal services.</p>
+      <p class="muted">Live public overview of appeal services.</p>
 
       <div class="grid" style="padding:0;">
-        <div class="card" style="background:var(--card-bg-3);">
-          <div class="status-heading">
-            <h3>Discord integration</h3>
-            {chip(bot_status, online)}
-          </div>
-          <p class="muted small">
-            Receives moderation events and updates appeal activity.
-          </p>
-        </div>
-
-        <div class="card" style="background:var(--card-bg-3);">
-          <div class="status-heading">
-            <h3>Database</h3>
-            {chip(supabase_status, data["supabase_ready"])}
-          </div>
-          <p class="muted small">
-            Stores appeals and user progress.
-          </p>
-        </div>
+        {cards_html}
       </div>
+
+      <p class="small muted" style="margin-top:12px;">Updated: {data["updated_at"]}</p>
 
       <div class="btn-row" style="margin-top:16px;">
         <a class="btn secondary" href="/">Home</a>

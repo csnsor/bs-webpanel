@@ -937,12 +937,35 @@ async def tos():
     """Render the Terms of Service page."""
     content = """
       <div class="card">
-        <h2>Terms of Service</h2>
-        <p class="muted">BlockSpin appeals are a formal process. By using this portal you agree to provide accurate information and accept that moderators may make irreversible decisions.</p>
-        <p class="muted"><strong>What you must do:</strong> submit truthful details, include relevant context, and avoid duplicate or spam appeals.</p>
-        <p class="muted"><strong>What is prohibited:</strong> ban evasion attempts, falsified evidence, harassment of staff, automated submissions, or sharing this portal for abuse.</p>
-        <p class="muted"><strong>Enforcement:</strong> violations may result in denial of appeals, additional sanctions, or permanent denial of future appeals.</p>
-        <p class="muted"><strong>Logging:</strong> we capture appeal content, account identifiers, IP/network metadata, and basic device info solely to secure the process.</p>
+        <h2>Terms of Service – BlockSpin Appeals Portal</h2>
+        <p class="muted">The BlockSpin Appeals Portal provides a formal process for requesting a review of moderation actions. By accessing or using this portal, you acknowledge and agree to the terms outlined below.</p>
+        <h3>User Responsibilities</h3>
+        <ul class="muted" style="margin-left:18px;">
+          <li>Provide accurate, complete, and truthful information in all appeal submissions</li>
+          <li>Include relevant context and supporting details related to the moderation action</li>
+          <li>Submit a single appeal per incident unless explicitly instructed otherwise</li>
+        </ul>
+        <h3>Prohibited Conduct</h3>
+        <ul class="muted" style="margin-left:18px;">
+          <li>Attempting to evade bans or sanctions through alternate accounts or methods</li>
+          <li>Submitting false, misleading, or fabricated information or evidence</li>
+          <li>Harassing, threatening, or abusing moderation staff</li>
+          <li>Using automated tools, scripts, or mass-submission methods</li>
+          <li>Sharing or misusing this portal for spam, abuse, or coordinated disruption</li>
+        </ul>
+        <h3>Review and Enforcement</h3>
+        <ul class="muted" style="margin-left:18px;">
+          <li>All appeals are reviewed at the discretion of BlockSpin moderators</li>
+          <li>Decisions made through this process may be final and irreversible</li>
+          <li>Violations of these terms may result in appeal denial, additional enforcement actions, or permanent loss of appeal privileges</li>
+        </ul>
+        <h3>Data Collection and Logging</h3>
+        <p class="muted">To maintain the integrity and security of the appeals process, BlockSpin may collect and process:</p>
+        <ul class="muted" style="margin-left:18px;">
+          <li>Appeal content and associated account identifiers</li>
+          <li>IP address, network metadata, and basic device information</li>
+        </ul>
+        <p class="muted">This data is used solely for moderation review, fraud prevention, and system security purposes. By continuing, you confirm that you understand and agree to these terms.</p>
         <div class="btn-row" style="margin-top:10px;"><a class="btn secondary" href="/">Back home</a></div>
       </div>
     """
@@ -954,11 +977,35 @@ async def privacy():
     """Render the Privacy Policy page."""
     content = """
       <div class="card">
-        <h2>Privacy</h2>
-        <p class="muted"><strong>Data we collect:</strong> appeal submissions, account identifiers, IP, approximate region, basic device/user agent, and limited message context to verify events.</p>
-        <p class="muted"><strong>How we use it:</strong> secure authentication, fraud prevention, moderation review, and auditability.</p>
-        <p class="muted"><strong>Sharing:</strong> only with authorized BlockSpin staff or as required by law. We do not sell your data.</p>
-        <p class="muted"><strong>Retention:</strong> data is kept for security and compliance; requests for removal can be directed to moderators subject to policy and legal obligations.</p>
+        <h2>Privacy Notice – BlockSpin Appeals Portal</h2>
+        <h3>Information We Collect</h3>
+        <ul class="muted" style="margin-left:18px;">
+          <li>Appeal submissions and related content</li>
+          <li>Account identifiers associated with the appeal</li>
+          <li>IP address and approximate geographic region</li>
+          <li>Basic device and browser information (user agent)</li>
+          <li>Limited message or event context necessary to verify moderation actions</li>
+        </ul>
+        <h3>How We Use Your Information</h3>
+        <p class="muted">Collected data is used strictly for legitimate operational purposes, including:</p>
+        <ul class="muted" style="margin-left:18px;">
+          <li>Authentication and access security</li>
+          <li>Fraud, abuse, and ban-evasion prevention</li>
+          <li>Moderation review and decision-making</li>
+          <li>Internal auditing and accountability</li>
+        </ul>
+        <h3>Data Sharing</h3>
+        <ul class="muted" style="margin-left:18px;">
+          <li>Access to appeal data is limited to authorized BlockSpin staff</li>
+          <li>Information may be disclosed if required to comply with legal or regulatory obligations</li>
+          <li>BlockSpin does not sell, rent, or trade user data</li>
+        </ul>
+        <h3>Data Retention</h3>
+        <ul class="muted" style="margin-left:18px;">
+          <li>Data is retained only as long as necessary for security, compliance, and operational review</li>
+          <li>Requests for data removal or access may be submitted to moderators and will be evaluated in accordance with internal policies and applicable laws</li>
+        </ul>
+        <p class="muted">By using this portal, you acknowledge and accept this Privacy Notice.</p>
         <div class="btn-row" style="margin-top:10px;"><a class="btn secondary" href="/">Back home</a></div>
       </div>
     """

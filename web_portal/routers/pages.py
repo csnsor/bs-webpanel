@@ -1569,10 +1569,17 @@ async def roblox_submit(
     evidence_links = _extract_evidence_links_from_reports(reports)
 
     user_lang = normalize_language(data.get("lang", "en"))
-    appeal_reason_en = await translate_text(appeal_reason, target_lang="en", source_lang=user_lang)
-    reason_for_embed = appeal_reason_en
+    appeal_reason_en = appeal_reason
+    reason_for_embed = appeal_reason
     if user_lang != "en":
-        reason_for_embed += f"\n(Original {user_lang}: {appeal_reason})"
+        try:
+            appeal_reason_en = await translate_text(appeal_reason, target_lang="en", source_lang=user_lang)
+            if appeal_reason_en.strip() != appeal_reason.strip():
+                reason_for_embed = f"[Translated] {appeal_reason_en}"
+            else:
+                reason_for_embed = appeal_reason_en
+        except Exception:
+            reason_for_embed = appeal_reason
 
     # discord_user_id will be handled by the internal user record in the database
     # No need to call bloxlink_api.get_discord_id_from_roblox_id here anymore

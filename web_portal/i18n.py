@@ -59,25 +59,46 @@ LANG_CACHE: Dict[str, Dict[str, str]] = {}
 async def translate_text(text: str, target_lang: str = "en", source_lang: Optional[str] = None) -> str:
     if not text or (normalize_language(target_lang) == "en" and normalize_language(source_lang) == "en"):
         return text
-    try:
-        client = get_http_client()
-        resp = await client.post(
-            LIBRETRANSLATE_URL,
-            json={
-                "q": text,
-                "source": source_lang or "auto",
-                "target": target_lang,
-                "format": "text",
-            },
-            headers={"Content-Type": "application/json"},
-            timeout=8,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("translatedText") or text
-        logging.warning("Translation failed status=%s body=%s", resp.status_code, resp.text)
-    except Exception as exc:
-        logging.warning("Translation exception: %s", exc)
+    # Try primary provider
+    providers = [
+        ("primary", LIBRETRANSLATE_URL),
+        ("gtx", "https://translate.googleapis.com/translate_a/single"),
+    ]
+    for name, url in providers:
+        try:
+            client = get_http_client()
+            if name == "gtx":
+                params = {
+                    "client": "gtx",
+                    "sl": source_lang or "auto",
+                    "tl": target_lang,
+                    "dt": "t",
+                    "q": text,
+                }
+                resp = await client.get(url, params=params, timeout=8)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    # Google translate API style response: [[["translated","original",...]],...]
+                    if data and isinstance(data, list) and data[0] and data[0][0]:
+                        return data[0][0][0] or text
+            else:
+                resp = await client.post(
+                    url,
+                    json={
+                        "q": text,
+                        "source": source_lang or "auto",
+                        "target": target_lang,
+                        "format": "text",
+                    },
+                    headers={"Content-Type": "application/json"},
+                    timeout=8,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data.get("translatedText") or text
+            logging.warning("Translation failed provider=%s status=%s body=%s", name, resp.status_code, resp.text)
+        except Exception as exc:
+            logging.warning("Translation exception provider=%s error=%s", name, exc)
     return text
 
 

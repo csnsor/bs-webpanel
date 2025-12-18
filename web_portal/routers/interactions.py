@@ -75,6 +75,25 @@ def _extract_evidence_links(reports: Optional[list]) -> list:
                     links.append(token)
     return links
 
+
+async def _translate_for_embed(text: Optional[str], lang_hint: Optional[str] = None) -> Tuple[str, bool]:
+    """
+    Return (english_text, translated_flag).
+    If language is already English, translated_flag is False.
+    """
+    safe_text = text or ""
+    hint = normalize_language(lang_hint or "")
+    if hint == "en":
+        return safe_text, False
+    try:
+        translated = await translate_text(safe_text, target_lang="en", source_lang=hint if hint else None)
+    except Exception:
+        translated = safe_text
+    translated = translated or safe_text
+    if hint != "en" and translated.strip() != safe_text.strip():
+        return translated, True
+    return translated, False
+
 # --- Roblox Appeal Handlers ---
 
 async def handle_roblox_initial_accept(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str], Optional[dict]]:
@@ -158,15 +177,17 @@ async def handle_roblox_final_accept(parts: list, mod_id: str, mod_name: str, em
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Accepted", "description": "Your Roblox appeal has been accepted and you have been unbanned.", "color": 0x2ECC71})
         await maybe_remove_from_dm_guild(appeal["discord_user_id"])
         
+    translated_reason, was_translated = await _translate_for_embed(appeal.get("appeal_text"))
+    desc = (
+        f"**Appealing Player:** {appeal['roblox_username']} ({appeal['roblox_id']})\n"
+        f"**Discord:** {discord_label}\n"
+        f"**Ban reason:** {appeal['short_ban_reason']}\n"
+        f"**Appeal:** {'[Translated] ' if was_translated else ''}{translated_reason}"
+    )
+
     log_embed = {
         "title": f"Roblox Appeal Accepted ({appeal_id})",
-        "description": (
-            f"**Appealing Player:** {appeal['roblox_username']} ({appeal['roblox_id']})\n"
-            f"**Discord:** {discord_label}\n"
-            f"**Ban reason:** {appeal['short_ban_reason']}\n"
-            f"**Appeal:** {appeal['appeal_text']}\n"
-            f"**Evidence:** {evidence_text}"
-        ),
+        "description": desc + f"\n**Evidence:** {evidence_text}",
         "color": 0x2ECC71,
         "fields": [
             {"name": "Moderator", "value": f"<@{mod_id}> ({mod_name})", "inline": False},
@@ -221,13 +242,16 @@ async def handle_discord_accept(parts: list, mod_id: str, mod_name: str, embed: 
     await update_staff_stats(mod_id, mod_name, accepted=True, created_at=(appeal_record or {}).get("created_at"))
     
     note = f"Unban {'OK' if unban_success else 'Fail'}; Re-add {'OK' if readd_success else 'Fail'}; DM {'OK' if dm_delivered else 'Fail'}."
+    translated_reason, was_translated = await _translate_for_embed((appeal_record or {}).get("appeal_reason"), user_lang)
+    description = (
+        f"**User:** <@{user_id}> ({user_id})\n"
+        f"**Ban reason:** {(appeal_record or {}).get('ban_reason') or 'N/A'}\n"
+        f"**Appeal:** {'[Translated] ' if was_translated else ''}{translated_reason}"
+    )
+
     log_embed = {
         "title": f"Discord Appeal Accepted ({appeal_id})",
-        "description": (
-            f"**User:** <@{user_id}> ({user_id})\n"
-            f"**Ban reason:** {(appeal_record or {}).get('ban_reason') or 'N/A'}\n"
-            f"**Appeal:** {(appeal_record or {}).get('appeal_reason') or 'N/A'}"
-        ),
+        "description": description,
         "color": 0x2ECC71,
         "fields": [
             {"name": "Moderator", "value": f"<@{mod_id}> ({mod_name})", "inline": False},
@@ -260,13 +284,16 @@ async def handle_discord_decline(parts: list, mod_id: str, mod_name: str, embed:
     await update_staff_stats(mod_id, mod_name, accepted=False, created_at=(appeal_record or {}).get("created_at"))
     
     note = f"User has been notified by DM (delivered: {dm_delivered})."
+    translated_reason, was_translated = await _translate_for_embed((appeal_record or {}).get("appeal_reason"), user_lang)
+    desc = (
+        f"**User:** <@{user_id}> ({user_id})\n"
+        f"**Ban reason:** {(appeal_record or {}).get('ban_reason') or 'N/A'}\n"
+        f"**Appeal:** {'[Translated] ' if was_translated else ''}{translated_reason}"
+    )
+
     log_embed = {
         "title": f"Discord Appeal Declined ({appeal_id})",
-        "description": (
-            f"**User:** <@{user_id}> ({user_id})\n"
-            f"**Ban reason:** {(appeal_record or {}).get('ban_reason') or 'N/A'}\n"
-            f"**Appeal:** {(appeal_record or {}).get('appeal_reason') or 'N/A'}"
-        ),
+        "description": desc,
         "color": 0xE74C3C,
         "fields": [
             {"name": "Moderator", "value": f"<@{mod_id}> ({mod_name})", "inline": False},

@@ -164,10 +164,15 @@ if discord:
             print(f"[DEBUG] RAM Cache for {message.author.name}: {len(_message_buffer[user_id])} messages stored.")
         await maybe_snapshot_messages(user_id, str(message.guild.id))
 
-        # Administrator-only commands
+        # Administrator-only commands (restricted to specific user)
         content = (message.content or "").strip().lower()
+        is_admin = getattr(message.author.guild_permissions, "administrator", False)
+        is_owner = str(getattr(message.author, "id", "")) == "665686029142851584"
+        if not is_owner:
+            return
+
         if content.startswith("!appeal_health"):
-            if not getattr(message.author.guild_permissions, "administrator", False):
+            if not is_admin:
                 return
 
             start = time.perf_counter()
@@ -228,7 +233,7 @@ if discord:
                 logging.warning("Failed to send system health embed: %s", exc)
 
         if content.startswith("!forcelogout_all"):
-            if not getattr(message.author.guild_permissions, "administrator", False):
+            if not is_admin:
                 return
             try:
                 state._session_epoch += 1
@@ -247,7 +252,7 @@ if discord:
                 logging.warning("Failed to force logout all: %s", exc)
 
         if content.startswith("!appeals_announce"):
-            if not getattr(message.author.guild_permissions, "administrator", False):
+            if not is_admin:
                 return
             parts = (message.content or "").split(" ", 1)
             announce_text = parts[1].strip() if len(parts) > 1 else ""

@@ -1160,7 +1160,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
     strings = await get_strings(current_lang)
     state_data = auth_data.get("state_data", {})
     user_id = user["sub"]
-    uname_label = user.get("name") or user.get("preferred_username")
+    uname_label = user.get("preferred_username") or user.get("name")  # prefer username over display name
     display_name = clean_display_name(user.get("nickname") or uname_label)
 
     # Account Linking Flow

@@ -92,6 +92,37 @@ def _timestamp_from_value(value: Optional[Any]) -> float:
     return 0.0
 
 
+def _network_fingerprint(request: Request) -> dict:
+    """
+    Build a minimal, non-sensitive network fingerprint for storage.
+    Includes coarse region hints and proxy/VPN signals without exposing secrets.
+    """
+    ip = get_client_ip(request)
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    country = (
+        request.headers.get("CF-IPCountry")
+        or request.headers.get("X-Country-Code")
+        or request.headers.get("X-Appengine-Country")
+    )
+    region = (
+        request.headers.get("Fly-Region")
+        or request.headers.get("X-Appengine-Region")
+        or request.headers.get("X-Region")
+    )
+    city = request.headers.get("X-Appengine-City")
+    via_proxy = bool(forwarded_for)
+    vpn_or_proxy = via_proxy or "," in forwarded_for
+    return {
+        "ip": ip,
+        "forwarded_for": forwarded_for,
+        "country": country,
+        "region": region,
+        "city": city,
+        "via_proxy": via_proxy,
+        "vpn_or_proxy": vpn_or_proxy,
+    }
+
+
 def _extract_evidence_links_from_reports(reports: List[Dict[str, Any]]) -> List[str]:
     """Return only URL tokens from report evidence strings, de-duplicated."""
     links: List[str] = []
@@ -1485,8 +1516,7 @@ async def roblox_submit(
     if await AppealService.check_session_used(token_hash, roblox_user_id):
         raise HTTPException(status_code=409, detail="This appeal was already submitted.")
 
-    ip = get_client_ip(request)
-    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    network_info = _network_fingerprint(request)
     user_agent = request.headers.get("User-Agent", "unknown")
     enforce_ip_rate_limit(ip)
     
@@ -1504,6 +1534,12 @@ async def roblox_submit(
 
     reports = await fetch_reports_for_roblox_id(roblox_user_id, limit=25)
     evidence_links = _extract_evidence_links_from_reports(reports)
+
+    user_lang = normalize_language(data.get("lang", "en"))
+    appeal_reason_en = await translate_text(appeal_reason, target_lang="en", source_lang=user_lang)
+    reason_for_embed = appeal_reason_en
+    if user_lang != "en":
+        reason_for_embed += f"\n(Original {user_lang}: {appeal_reason})"
 
     # discord_user_id will be handled by the internal user record in the database
     # No need to call bloxlink_api.get_discord_id_from_roblox_id here anymore
@@ -1529,7 +1565,7 @@ async def roblox_submit(
         roblox_username=data["runame"],
         roblox_id=roblox_user_id,
         short_ban_reason=data.get("ban_reason_short", "N/A"),
-        appeal_reason=appeal_reason,
+        appeal_reason=reason_for_embed,
         discord_user_id=discord_user_id,
         evidence_links=evidence_links,
     )
@@ -1547,7 +1583,7 @@ async def roblox_submit(
     await AppealService.mark_session_used(
         token_hash,
         internal_user_id,
-        network_info={"ip": ip, "forwarded_for": forwarded_for},
+        network_info=network_info,
         other_info={"user_agent": user_agent, "path": str(request.url.path)},
     )
     _appeal_locked[internal_user_id] = True # Use internal_user_id for appeal locked state

@@ -123,6 +123,7 @@ async def handle_roblox_initial_decline(parts: list, mod_id: str, mod_name: str,
     
     if appeal.get("discord_user_id"):
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Declined", "description": "Your appeal has been reviewed and declined.", "color": 0xE74C3C})
+        await maybe_remove_from_dm_guild(appeal["discord_user_id"])
     
     # Delete the initial message and log it
     await delete_message(payload["channel_id"], payload["message"]["id"])
@@ -155,6 +156,7 @@ async def handle_roblox_final_accept(parts: list, mod_id: str, mod_name: str, em
     
     if appeal.get("discord_user_id"):
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Accepted", "description": "Your Roblox appeal has been accepted and you have been unbanned.", "color": 0x2ECC71})
+        await maybe_remove_from_dm_guild(appeal["discord_user_id"])
         
     log_embed = {
         "title": f"Roblox Appeal Accepted ({appeal_id})",
@@ -193,6 +195,7 @@ async def handle_roblox_final_decline(parts: list, mod_id: str, mod_name: str, e
     
     if appeal.get("discord_user_id"):
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Declined", "description": "Your Roblox appeal was declined during final review.", "color": 0xE74C3C})
+        await maybe_remove_from_dm_guild(appeal["discord_user_id"])
         
     meta = {"delete_message": True, "ephemeral": "Appeal declined and review message removed."}
     return create_updated_embed(embed, "declined", mod_id), None, meta
@@ -211,6 +214,7 @@ async def handle_discord_accept(parts: list, mod_id: str, mod_name: str, embed: 
     accept_desc_en = "Your appeal has been reviewed and accepted. You have been unbanned and re-added to the server."
     accept_desc = await translate_text(accept_desc_en, target_lang=user_lang) if user_lang != "en" else accept_desc_en
     dm_delivered = await dm_user(user_id, {"title": "Appeal Accepted", "description": accept_desc, "color": 0x2ECC71})
+    await maybe_remove_from_dm_guild(user_id)
 
     await update_appeal_status(appeal_id, "accepted", mod_id, dm_delivered=dm_delivered)
     _appeal_locked[internal_user_id] = True

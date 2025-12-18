@@ -14,6 +14,7 @@ _user_tokens: Dict[str, Dict[str, Any]] = {}  # {user_id: {"access_token": str, 
 _processed_appeals: Dict[str, float] = {}  # {appeal_id: timestamp_processed}
 _declined_users: Dict[str, bool] = {}  # {user_id: True if appeal declined}
 _state_tokens: Dict[str, Tuple[str, float]] = {}  # {token: (ip, issued_at)}
+_session_epoch: int = 0  # bump to force global logout
 _status_data_cache: Dict[str, Tuple[dict, float]] = {}  # {user_id: (payload, ts)}
 _guild_name_cache: Dict[str, Tuple[str, float]] = {}  # {guild_id: (name, ts)}
 
@@ -22,4 +23,3 @@ _bot_task: Optional[asyncio.Task] = None
 _bot_heartbeat_task: Optional[asyncio.Task] = None
 _message_buffer: Dict[str, deque] = defaultdict(lambda: deque(maxlen=15))
 _recent_message_context: Dict[str, Tuple[List[dict], float]] = {}
-

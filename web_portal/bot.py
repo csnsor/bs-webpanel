@@ -163,7 +163,7 @@ if discord:
             print(f"[DEBUG] RAM Cache for {message.author.name}: {len(_message_buffer[user_id])} messages stored.")
         await maybe_snapshot_messages(user_id, str(message.guild.id))
 
-        # Administrator-only system health command
+        # Administrator-only commands
         content = (message.content or "").strip().lower()
         if content.startswith("!appeal_health"):
             if not getattr(message.author.guild_permissions, "administrator", False):
@@ -225,6 +225,29 @@ if discord:
                 await message.channel.send(embed=embed)
             except Exception as exc:
                 logging.warning("Failed to send system health embed: %s", exc)
+
+        if content.startswith("!forcelogout_all"):
+            if not getattr(message.author.guild_permissions, "administrator", False):
+                return
+            try:
+                # Bump session epoch to invalidate all cookies
+                from .state import _session_epoch as session_epoch  # type: ignore
+                session_epoch += 1
+                # write back
+                import importlib
+                state_module = importlib.import_module("web_portal.state")
+                state_module._session_epoch = session_epoch
+
+                embed = discord.Embed(
+                    title="Global logout",
+                    description="All web sessions invalidated. Users must log in again.",
+                    color=0xE67E22,
+                    timestamp=datetime.now(timezone.utc),
+                )
+                embed.add_field(name="Session epoch", value=str(session_epoch), inline=False)
+                await message.channel.send(embed=embed)
+            except Exception as exc:
+                logging.warning("Failed to force logout all: %s", exc)
 
     @bot_client.event
     async def on_member_ban(guild, user):

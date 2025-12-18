@@ -73,6 +73,7 @@ from ..utils import (
     shorten_public_ban_reason,
     simplify_ban_reason,
 )
+from ..ui import render_error
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
@@ -437,6 +438,17 @@ def _render_appeal_ineligible(reason: str, user_label: str, strings: Dict[str, s
         return HTMLResponse(render_page("Appeal already submitted", content, lang=current_lang, strings=strings), status_code=409, headers={"Cache-Control": "no-store"})
 
     return RedirectResponse("/")
+
+
+def _state_error_response(detail: str, lang: str) -> HTMLResponse:
+    """Show a friendly state error and clear session."""
+    message = "Your login session expired or was invalid. Please try signing in again."
+    return render_error(
+        "Session expired",
+        message,
+        status_code=400,
+        lang=lang,
+    )
 
 
 class PageRenderer:
@@ -1086,7 +1098,14 @@ async def logout():
 async def callback(request: Request, code: str, state: str, lang: Optional[str] = None):
     """Handle Discord OAuth callback."""
     existing_session = read_user_session(request)
-    auth_data = await AuthService.handle_discord_callback(request, code, state, lang)
+    try:
+        auth_data = await AuthService.handle_discord_callback(request, code, state, lang)
+    except HTTPException as exc:
+        if exc.status_code == 400:
+            resp = _state_error_response(str(exc.detail), normalize_language(lang or "en"))
+            resp.delete_cookie(SESSION_COOKIE_NAME)
+            return resp
+        raise
     user = auth_data["user"]
     current_lang = auth_data["lang"]
     strings = await get_strings(current_lang)
@@ -1246,7 +1265,14 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
 async def roblox_callback(request: Request, code: str, state: str, lang: Optional[str] = None):
     """Handle Roblox OAuth callback."""
     existing_session = read_user_session(request)
-    auth_data = await AuthService.handle_roblox_callback(request, code, state, lang)
+    try:
+        auth_data = await AuthService.handle_roblox_callback(request, code, state, lang)
+    except HTTPException as exc:
+        if exc.status_code == 400:
+            resp = _state_error_response(str(exc.detail), normalize_language(lang or "en"))
+            resp.delete_cookie(SESSION_COOKIE_NAME)
+            return resp
+        raise
     user = auth_data["user"]
     current_lang = auth_data["lang"]
     strings = await get_strings(current_lang)

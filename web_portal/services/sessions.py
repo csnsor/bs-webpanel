@@ -18,6 +18,7 @@ from .roblox_api import (
     get_user_info as get_roblox_user_info,
     get_valid_access_token as get_valid_roblox_token,
 )
+from ..state import _session_epoch
 
 serializer = URLSafeSerializer(SECRET_KEY, salt="appeals-portal")
 
@@ -51,6 +52,7 @@ def persist_session(
         logging.error("Invalid platform_type passed to persist_session: %s", platform_type)
         raise ValueError("Invalid platform_type")
 
+    session["epoch"] = _session_epoch
     token = serializer.dumps(session)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -95,6 +97,7 @@ def update_session_with_platform(
         updated_session["display_name"] = display_name
 
     updated_session["iat"] = time.time()
+    updated_session["epoch"] = _session_epoch
     token = serializer.dumps(updated_session)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -112,6 +115,7 @@ def maybe_persist_session(request: Request, response: Response, session: Optiona
         return
 
     session["iat"] = time.time()
+    session["epoch"] = _session_epoch
     token = serializer.dumps(session)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -129,6 +133,9 @@ def read_user_session(request: Request) -> Optional[dict]:
         return None
     try:
         data = serializer.loads(raw)
+        if data.get("epoch") is not None and data.get("epoch") != _session_epoch:
+            logging.info("Session epoch mismatch; forcing logout.")
+            return None
         return data
     except BadSignature:
         logging.warning("Invalid session cookie signature. Session potentially tampered with or corrupt.")

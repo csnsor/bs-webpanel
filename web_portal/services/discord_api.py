@@ -221,14 +221,24 @@ async def ensure_dm_guild_membership(user_id: str) -> bool:
     return added
 
 
-async def maybe_remove_from_dm_guild(user_id: str) -> None:
+async def maybe_remove_from_dm_guild(user_id: str, *, attempt: int = 0) -> None:
+    """
+    Removes a user from the DM guild with simple retries on 429.
+    """
     if not DM_GUILD_ID or not REMOVE_FROM_DM_GUILD_AFTER_DM:
         return
     client = get_http_client()
-    await client.delete(
+    resp = await client.delete(
         f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/members/{user_id}",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
     )
+    if resp.status_code == 429 and attempt < 3:
+        try:
+            retry_after = float(resp.headers.get("Retry-After", "2"))
+        except Exception:
+            retry_after = 2.0
+        await asyncio.sleep(min(retry_after, 10.0))
+        await maybe_remove_from_dm_guild(user_id, attempt=attempt + 1)
 
 
 async def remove_from_target_guild(user_id: str) -> Optional[int]:

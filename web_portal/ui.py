@@ -23,9 +23,16 @@ HISTORY_TEMPLATE = JINJA_ENV.from_string(
   {% elif status.startswith("decline") %}{% set status_class = "declined" %}
   {% endif %}
   <li class="history-item">
-    <div class="status-chip {{ status_class }}">{{ status.title() }}</div>
+    <div class="history-item__header">
+      <div class="status-chip {{ status_class }}">{{ status.title() }}</div>
+      {% if item.get("platform") %}
+        <span class="chip chip--ghost">{{ item.get("platform") }}</span>
+      {% endif %}
+    </div>
     <div class="meta"><strong>Reference:</strong> {{ item.get("appeal_id") or "-" }}</div>
     <div class="meta"><strong>Submitted:</strong> {{ format_timestamp(item.get("created_at") or "") }}</div>
+    <div class="meta"><strong>Moderator:</strong> {{ item.get("moderator") or "Pending review" }}</div>
+    <div class="meta"><strong>Resolution:</strong> {{ item.get("resolution") or "No resolution details recorded." }}</div>
     <div class="meta"><strong>Ban reason:</strong> {{ item.get("ban_reason") or "No ban reason recorded." }}</div>
     <div class="meta"><strong>Appeal:</strong> {{ item.get("appeal_reason") or "No appeal reason captured." }}</div>
   </li>
@@ -91,6 +98,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
 
             <nav class="nav">
               <a class="nav__link" href="/status">Appeal Status</a>
+              <a class="nav__link" href="/how-it-works">How it works</a>
               <a class="nav__link" href="/tos">Terms</a>
               <a class="nav__link" href="/privacy">Privacy</a>
               <a class="nav__link nav__link--muted" href="{INVITE_LINK}" rel="noreferrer">Discord</a>

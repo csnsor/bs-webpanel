@@ -7,6 +7,7 @@ import logging
 import secrets
 import time
 import uuid
+import httpx
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 
@@ -76,6 +77,99 @@ router = APIRouter()
 security = HTTPBearer(auto_error=False)
 
 
+def _timestamp_from_value(value: Optional[Any]) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+        try:
+            return datetime.fromisoformat(text).timestamp()
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+async def _collect_combined_history(session: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not session:
+        return []
+
+    # Ensure we have a canonical internal user id even if the session is older
+    normalized_session, _ = await _ensure_internal_identity(session)
+    internal_user_id = normalized_session.get("internal_user_id") if normalized_session else None
+    if not internal_user_id:
+        return []
+
+    history: List[Dict[str, Any]] = []
+
+    discord_records = await fetch_appeal_history(internal_user_id, limit=50)
+    for rec in discord_records or []:
+        history.append(
+            {
+                "platform": "Discord",
+                "appeal_id": rec.get("appeal_id"),
+                "created_at": rec.get("created_at"),
+                "status": rec.get("status"),
+                "ban_reason": rec.get("ban_reason"),
+                "appeal_reason": rec.get("appeal_reason"),
+                "moderator": rec.get("moderator_username") or rec.get("decision_by"),
+                "resolution": rec.get("notes") or rec.get("resolution_reason"),
+            }
+        )
+
+    roblox_records = await appeal_db.get_roblox_appeal_history(internal_user_id, limit=50)
+    for rec in roblox_records or []:
+        ban_data = rec.get("ban_data") or {}
+        short_reason = rec.get("short_ban_reason") or ban_data.get("displayReason") or ban_data.get("reason")
+        history.append(
+            {
+                "platform": "Roblox",
+                "appeal_id": rec.get("id"),
+                "created_at": rec.get("created_at"),
+                "status": rec.get("status"),
+                "ban_reason": short_reason,
+                "appeal_reason": rec.get("appeal_text"),
+                "moderator": rec.get("moderator_username") or rec.get("moderator_id"),
+                "resolution": rec.get("resolution_reason") or rec.get("notes"),
+            }
+        )
+
+    history.sort(key=lambda entry: _timestamp_from_value(entry.get("created_at")), reverse=True)
+    return history
+
+
+async def _ensure_internal_identity(session: Optional[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], bool]:
+    """
+    Make sure the session carries a canonical internal_user_id and patch remote records so both
+    platforms collapse into the same identity. Returns (session, changed_flag).
+    """
+    if not session:
+        return None, False
+
+    discord_id = session.get("uid")
+    roblox_id = session.get("ruid")
+    internal_user_id = session.get("internal_user_id")
+
+    # Nothing to normalize if we have no identifiers yet.
+    if not (discord_id or roblox_id or internal_user_id):
+        return session, False
+
+    target_id = await resolve_internal_user_id(
+        discord_id=discord_id,
+        roblox_id=roblox_id,
+        current_id=internal_user_id,
+    )
+
+    if target_id == internal_user_id:
+        # Even when unchanged, resolve_internal_user_id has already patched Supabase so linked data merges.
+        return session, False
+
+    updated = dict(session)
+    updated["internal_user_id"] = target_id
+    return updated, True
+
+
 class AppealService:
     """Service for handling appeal-related operations."""
     
@@ -107,18 +201,28 @@ class AppealService:
         return True, ""
     
     @staticmethod
-    async def check_rate_limit(user_id: str, ip: str) -> Tuple[bool, str]:
-        """Check if user is rate limited."""
+    async def check_rate_limit(identity_key: str, ip: str, *, legacy_keys: Optional[List[str]] = None) -> Tuple[bool, str]:
+        """Check if a user (by canonical identity) is rate limited across platforms."""
         now = time.time()
+        keys_to_check = [identity_key] + [k for k in (legacy_keys or []) if k]
         
         # Check local rate limit
-        last = _appeal_rate_limit.get(user_id)
+        last: Optional[float] = None
+        for key in keys_to_check:
+            key_last = _appeal_rate_limit.get(key)
+            if key_last:
+                last = max(last or 0, key_last)
         if last and now - last < APPEAL_COOLDOWN_SECONDS:
             wait = int(APPEAL_COOLDOWN_SECONDS - (now - last))
             return False, f"Please wait {wait} seconds before submitting another appeal."
         
         # Check remote rate limit
-        remote_last = await get_remote_last_submit(user_id)
+        remote_last: Optional[float] = None
+        for key in keys_to_check:
+            candidate = await get_remote_last_submit(key)
+            if candidate:
+                remote_last = max(remote_last or 0, candidate)
+
         if remote_last:
             last = max(last or 0, remote_last)
             if now - last < APPEAL_COOLDOWN_SECONDS:
@@ -152,11 +256,11 @@ class AppealService:
         return await is_session_token_used(session_hash)
     
     @staticmethod
-    async def mark_session_used(session_hash: str, user_id: str):
-        """Mark session as used."""
+    async def mark_session_used(session_hash: str, identity_key: str):
+        """Mark session as used (tracks by canonical identity to avoid cross-platform dupes)."""
         now = time.time()
         _used_sessions[session_hash] = now
-        await mark_session_token(session_hash, user_id, now)
+        await mark_session_token(session_hash, identity_key, now)
         
         # Clean up stale sessions
         stale_sessions = [token for token, ts in _used_sessions.items() if now - ts > SESSION_TTL_SECONDS * 2]
@@ -302,6 +406,8 @@ class PageRenderer:
         
         user_session = read_user_session(request)
         user_session, session_refreshed = await refresh_session_profile(user_session)
+        user_session, identity_refreshed = await _ensure_internal_identity(user_session)
+        session_refreshed = session_refreshed or identity_refreshed
         strings = dict(strings)
         
         discord_login_url = discord_oauth_authorize_url(state)
@@ -316,9 +422,6 @@ class PageRenderer:
         content = await PageRenderer._build_home_content(
             strings, discord_login_url, roblox_login_url, user_session
         )
-        
-        strings["script_nonce"] = secrets.token_urlsafe(12)
-        strings["script_block"] = PageRenderer._get_home_script()
         
         response = HTMLResponse(
             render_page("BlockSpin Appeals", content, lang=current_lang, strings=strings),
@@ -336,32 +439,9 @@ class PageRenderer:
         session: Optional[Dict[str, Any]] = None
     ) -> str:
         """Build the content for the home page."""
-        
-        session = session or {}
-        is_logged_in = "internal_user_id" in session
-        has_discord = bool(session.get("uid"))
-        has_roblox = bool(session.get("ruid"))
-
-        # Action buttons in the hero section
-        hero_actions = []
-        if is_logged_in:
-            hero_actions.append('<a class="btn btn--primary" href="/status">Check Appeal Status</a>')
-        else:
-            # Not logged in, show both options for initial login
-            hero_actions.append('<a class="btn btn--primary" href="/status">Check Appeal Status</a>')
-            hero_actions.append('<a class="btn btn--soft" href="#how-it-works">Learn how it works</a>')
-        
-        # Action buttons in the side panel
-        panel_actions = []
-        if is_logged_in:
-            panel_actions.append('<p class="muted">You are signed in.</p>')
-        else: # Not logged in, show guidance
-            panel_actions.append('<p class="muted">Use the buttons in the header to authenticate with Discord or Roblox.</p>')
-            panel_actions.append('<a class="btn btn--soft btn--wide" href="/status">Preview appeal status</a>')
-
         return f"""
         <section class="hero">
-          <div class="hero__card">
+          <div class="hero__card hero__card--compact">
             <div class="hero__badge">
               <span class="pulse" aria-hidden="true"></span>
               Live moderation workflow
@@ -375,291 +455,29 @@ class PageRenderer:
               Authenticate with Discord or Roblox, review your status, and submit a clear, respectful appeal to BlockSpin moderators.
             </p>
 
-            <div class="hero__cta">
-              {"".join(hero_actions)}
-            </div>
-
             <div class="hero__meta">
-              <div class="stat">
-                <div class="stat__k">Live status</div>
-                <div class="stat__v" id="liveStatus">Checking…</div>
-              </div>
-              <div class="stat">
-                <div class="stat__k">Latest ref</div>
-                <div class="stat__v" id="liveRef">—</div>
-              </div>
-              <div class="stat">
-                <div class="stat__k">Decision</div>
-                <div class="stat__v" id="liveDecision">—</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="hero__side">
-            <div class="panel" id="how-it-works">
-              <h2 class="panel__title">How it works</h2>
-              <ol class="steps">
-                <li><span class="steps__n">1</span> Sign in to confirm your identity.</li>
-                <li><span class="steps__n">2</span> Review your appeal status + history.</li>
-                <li><span class="steps__n">3</span> Submit one appeal with concise evidence.</li>
-              </ol>
-              <div class="panel__note">
-                Tip: "I understand what I did, here's context, here's how I'll improve" is the fastest path.
-              </div>
-
-              <div class="panel__actions">
-                {"".join(panel_actions)}
-                <div class="legal">
-                  <a href="/tos">Terms</a>
-                  <span class="dot" aria-hidden="true"></span>
-                  <a href="/privacy">Privacy</a>
-                </div>
-              </div>
+              <p class="muted">
+                Use the header actions to log in, then visit the Status page for combined history and the How it works page for step-by-step guidance before submitting.
+              </p>
             </div>
           </div>
         </section>
-        <script id="home-link-data" type="application/json">{html.escape(json.dumps({
-            "needs_discord": bool(has_roblox and not has_discord),
-            "needs_roblox": bool(has_discord and not has_roblox),
-            "discord_url": discord_login_url or "",
-            "roblox_url": roblox_login_url or "",
-            "session_active": bool(is_logged_in),
-        }))}</script>
-
         <section class="grid">
           <article class="card">
             <div class="card__top">
-              <h2 class="card__title">Appeal history</h2>
-              <div class="chip" id="historyChip">Loading data…</div>
+              <h2 class="card__title">Need a refresher?</h2>
             </div>
-
-            <div class="callout callout--info" id="home-link-prompt" style="margin-bottom:16px; display:none;">
-              <span class="muted small">Connect both platforms to see the complete appeal timeline.</span>
-              <div id="home-link-buttons" style="margin-top:6px; display:flex; gap:6px;"></div>
-            </div>
-
-            <div class="empty" id="historyEmpty">
-              Sign in to see your history and live status.
-              <div class="empty__actions">
-                <a class="btn btn--soft" href="/status">Open Status</a>
-              </div>
-            </div>
-
-            <ul class="list" id="historyList" hidden></ul>
-          </article>
-
-          <article class="card">
-            <div class="card__top">
-              <h2 class="card__title">Status signals</h2>
-              <div class="chip chip--ok" id="signalChip">Portal online</div>
-            </div>
-
-            <div class="kv">
-              <div class="kv__row">
-                <div class="kv__k">Live feed</div>
-                <div class="kv__v" id="feedState">Connected</div>
-              </div>
-              <div class="kv__row">
-                <div class="kv__k">Updates</div>
-                <div class="kv__v">Every 15s</div>
-              </div>
-              <div class="kv__row">
-                <div class="kv__k">Privacy</div>
-                <div class="kv__v">Minimal display</div>
-              </div>
-            </div>
-
-            <div class="callout">
-              Appeals are reviewed by moderators. Decisions may be final. Don't spam submissions.
+            <p class="muted" style="margin-bottom:16px;">
+              Sign in via the header, then monitor your appeals on the Status page. Link both Discord and Roblox to see a unified timeline and stay in the loop.
+            </p>
+            <div class="btn-row">
+              <a class="btn btn--ghost" href="/status">Visit Status</a>
+              <a class="btn btn--soft" href="/how-it-works">Read how it works</a>
             </div>
           </article>
         </section>
         """
     
-    @staticmethod
-    def _get_home_script() -> str:
-        """Get the JavaScript for the home page."""
-        return """
-        (function(){
-          const els = {
-            liveStatus: document.getElementById("liveStatus"),
-            liveRef: document.getElementById("liveRef"),
-            liveDecision: document.getElementById("liveDecision"),
-            list: document.getElementById("historyList"),
-            empty: document.getElementById("historyEmpty"),
-            chip: document.getElementById("historyChip"),
-            feedState: document.getElementById("feedState"),
-            signalChip: document.getElementById("signalChip"),
-            linkPrompt: document.getElementById("home-link-prompt"),
-            linkButtons: document.getElementById("home-link-buttons"),
-            linkData: document.getElementById("home-link-data"),
-          };
-
-          function esc(s){
-            const escMap = {
-              "&":"&amp;",
-              "<":"&lt;",
-              ">":"&gt;",
-              '"':"&quot;",
-              "'":"&#39;",
-              "/":"&#x2F;"
-            };
-            return String(s ?? "").replace(/[&<>"'/]/g, ch => escMap[ch]);
-          }
-
-          function statusClass(status){
-            const t = String(status || "pending").toLowerCase();
-            if (t.startsWith("accept")) return "ok";
-            if (t.startsWith("decline")) return "no";
-            return "wait";
-          }
-
-          function statusLabel(status){
-            const t = String(status || "pending").toLowerCase();
-            if (t.startsWith("accept")) return "Accepted";
-            if (t.startsWith("decline")) return "Declined";
-            return "Pending";
-          }
-
-          let linkInfo = {};
-          if (els.linkData){
-            try{
-              linkInfo = JSON.parse(els.linkData.textContent || "{}");
-            }catch(err){
-              linkInfo = {};
-            }
-          }
-
-          function refreshLinkPrompt(){
-            if (!els.linkPrompt || !els.linkButtons){
-              return;
-            }
-            const needsDiscord = linkInfo.needs_discord && linkInfo.discord_url;
-            const needsRoblox = linkInfo.needs_roblox && linkInfo.roblox_url;
-            let html = "";
-            if (needsDiscord){
-              html += `<a class="btn btn--discord btn--soft btn--wide" href="${esc(linkInfo.discord_url)}" target="_blank" rel="noopener noreferrer">Link Discord</a>`;
-            }
-            if (needsRoblox){
-              html += `<a class="btn btn--roblox btn--soft btn--wide" href="${esc(linkInfo.roblox_url)}" target="_blank" rel="noopener noreferrer">Link Roblox</a>`;
-            }
-            if (html){
-              els.linkButtons.innerHTML = html;
-              els.linkPrompt.style.display = "flex";
-            } else {
-              els.linkPrompt.style.display = "none";
-            }
-          }
-
-          function setEmptyState(){
-            if (els.liveStatus) els.liveStatus.textContent = linkInfo.session_active ? "Signed in" : "Sign in to see your status";
-            if (els.liveRef) els.liveRef.textContent = "—";
-            if (els.liveDecision) els.liveDecision.textContent = "—";
-            if (els.chip) els.chip.textContent = "No appeals yet";
-            if (els.list){
-              els.list.hidden = true;
-              els.list.innerHTML = "";
-            }
-            if (els.empty){
-              els.empty.hidden = false;
-              const needs = [];
-              if (linkInfo.needs_discord) needs.push("Discord");
-              if (linkInfo.needs_roblox) needs.push("Roblox");
-              const emptyText = needs.length
-                ? `Connect ${needs.join(" and ")} to view your latest appeals.`
-                : linkInfo.session_active
-                  ? "You are signed in but have no appeals yet."
-                  : "Sign in to see your history and live status.";
-              els.empty.textContent = emptyText;
-            }
-          }
-
-          function setListState(history){
-            if (!els.list){
-              return;
-            }
-            els.list.hidden = history.length === 0;
-            if (!history.length){
-              els.list.innerHTML = "";
-              return;
-            }
-            els.list.innerHTML = history.map(item => {
-              const s = statusLabel(item.status);
-              const cls = statusClass(item.status);
-              const ref = esc(item.appeal_id || "—");
-              const submitted = esc(item.created_at || "—");
-              const reason = esc(item.ban_reason || "No reason recorded");
-              const platform = item.platform ? `<span class="chip chip--ghost">${esc(item.platform)}</span>` : "";
-              return `
-                <li class="row">
-                  <div class="row__left">
-                    <div class="pill pill--${cls}">${esc(s)}</div>
-                    <div class="row__meta">
-                      <div class="row__k">Reference</div>
-                      <div class="row__v">${ref} ${platform}</div>
-                    </div>
-                    <div class="row__meta">
-                      <div class="row__k">Submitted</div>
-                      <div class="row__v">${submitted}</div>
-                    </div>
-                  </div>
-                  <div class="row__right">
-                    <div class="row__k">Ban reason</div>
-                    <div class="row__v row__v--wrap">${reason}</div>
-                  </div>
-                </li>
-              `;
-            }).join("");
-          }
-
-          function updateLiveMetrics(latest, count){
-            if (els.liveStatus) els.liveStatus.textContent = "Active";
-            if (els.liveRef) els.liveRef.textContent = latest?.appeal_id ? String(latest.appeal_id) : "—";
-            if (els.liveDecision) els.liveDecision.textContent = statusLabel(latest?.status);
-            if (els.chip) els.chip.textContent = `${count} appeal${count === 1 ? "" : "s"}`;
-          }
-
-          function updateSignal(online){
-            if (els.feedState) els.feedState.textContent = online ? "Connected" : "Disconnected";
-            if (!els.signalChip){
-              return;
-            }
-            els.signalChip.textContent = online ? "Portal online" : "Live updates unavailable";
-            els.signalChip.classList.toggle("chip--ok", online);
-            els.signalChip.classList.toggle("chip--warn", !online);
-          }
-
-          async function tick(){
-            try{
-              const r = await fetch("/status/data", { headers: { "Accept":"application/json" } });
-              if (!r.ok){
-                throw new Error("status request failed");
-              }
-              const data = await r.json();
-              const hist = Array.isArray(data.history) ? data.history : [];
-              if (!hist.length){
-                setEmptyState();
-                updateSignal(true);
-                return;
-              }
-              updateLiveMetrics(hist[0], hist.length);
-              setListState(hist);
-              if (els.empty) els.empty.hidden = true;
-              updateSignal(true);
-            }catch(err){
-              setEmptyState();
-              if (els.chip) els.chip.textContent = "Live data offline";
-              if (els.liveStatus) els.liveStatus.textContent = "Unavailable";
-              updateSignal(false);
-            }
-          }
-
-          refreshLinkPrompt();
-          setEmptyState();
-          tick();
-          setInterval(tick, 15000);
-        })();
-        """
 
     @staticmethod
     async def render_status_page(request: Request, lang: Optional[str] = None) -> HTMLResponse:
@@ -671,6 +489,8 @@ class PageRenderer:
         
         session = read_user_session(request)
         session, session_refreshed = await refresh_session_profile(session)
+        session, identity_refreshed = await _ensure_internal_identity(session)
+        session_refreshed = session_refreshed or identity_refreshed
         strings = dict(strings)
         
         if not session:
@@ -704,39 +524,143 @@ class PageRenderer:
             resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
             return resp
         
-        strings["top_actions"] = build_user_chip(session)
-        
+        discord_login_url = None
+        roblox_login_url = None
+        if not session.get("uid") or not session.get("ruid"):
+            state_token = issue_state_token(ip)
+            state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
+            discord_login_url = discord_oauth_authorize_url(state)
+            roblox_login_url = roblox_api.oauth_authorize_url(state)
+
+        strings["top_actions"] = build_user_chip(
+            session,
+            discord_login_url=discord_login_url,
+            roblox_login_url=roblox_login_url,
+        )
+
         internal_user_id = session.get("internal_user_id")
         if not internal_user_id:
-            # Should not happen if session is valid, but as a safeguard
             raise HTTPException(status_code=401, detail="Internal user ID not found in session.")
 
-        if is_supabase_ready():
-            history = await fetch_appeal_history(internal_user_id, limit=10) # Pass internal_user_id
-            history_html = render_history_items(history, format_timestamp=format_timestamp)
-        else:
-            history_html = "<div class='muted'></div>"
-        
+        history = await _collect_combined_history(session)
+        history_html = render_history_items(history, format_timestamp=format_timestamp)
+
+        has_discord = bool(session.get("uid"))
+        has_roblox = bool(session.get("ruid"))
+        link_prompt_html = ""
+
+        if has_discord and not has_roblox and roblox_login_url:
+            prompt_text = strings.get("link_roblox_prompt", "Connect your Roblox account to sync appeal history.")
+            prompt_cta = strings.get("link_roblox_cta", "Connect Roblox")
+            link_prompt_html = f"""
+              <div class="callout callout--info">
+                <p class="muted" style="margin-bottom:8px;">{html.escape(prompt_text)}</p>
+                <a class="btn btn--roblox btn--wide" href="{html.escape(roblox_login_url)}">{html.escape(prompt_cta)}</a>
+              </div>
+            """
+        elif has_roblox and not has_discord and discord_login_url:
+            prompt_text = strings.get("link_discord_prompt", "Connect your Discord to receive updates about this appeal.")
+            prompt_cta = strings.get("link_discord_cta", "Connect Discord")
+            link_prompt_html = f"""
+              <div class="callout callout--info">
+                <p class="muted" style="margin-bottom:8px;">{html.escape(prompt_text)}</p>
+                <a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}">{html.escape(prompt_cta)}</a>
+              </div>
+            """
+
+        display_name = html.escape(clean_display_name(session.get("display_name") or session.get("uname", "you")))
         content = f"""
           <div class="card status-card">
             <div class="status-heading">
-              <h1>Appeal history for {html.escape(clean_display_name(session.get('display_name') or session.get('uname','you')))}</h1>
-              <p class="muted">Monitor decisions and peer context for this ban review.</p>
+              <h1>Appeal history for {display_name}</h1>
+              <p class="muted">All linked appeals are shown in one timeline.</p>
             </div>
-            {history_html}
+            {link_prompt_html}
+            <div class="history-wrapper">
+              {history_html}
+            </div>
             <div class="btn-row" style="margin-top:10px;">
+              <a class="btn secondary" href="/how-it-works">{html.escape(strings.get("how_it_works", "How it works"))}</a>
               <a class="btn secondary" href="/">Back home</a>
             </div>
           </div>
         """
-        
+
         resp = HTMLResponse(
-            render_page("Appeal status", content, lang=current_lang, strings=strings), 
-            headers={"Cache-Control": "no-store"}
+            render_page("Appeal status", content, lang=current_lang, strings=strings),
+            headers={"Cache-Control": "no-store"},
         )
         maybe_persist_session(request, resp, session, session_refreshed)
         resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
         return resp
+
+    @staticmethod
+    async def render_how_it_works_page(request: Request, lang: Optional[str] = None) -> HTMLResponse:
+        current_lang = await detect_language(request, lang)
+        strings = await get_strings(current_lang)
+        ip = get_client_ip(request)
+        state_token = issue_state_token(ip)
+        state = serializer.dumps({
+            "nonce": secrets.token_urlsafe(8),
+            "lang": current_lang,
+            "state_id": state_token,
+        })
+
+        asyncio.create_task(send_log_message(f"[visit_how_it_works] ip_hash={hash_ip(ip)} lang={current_lang}"))
+
+        user_session = read_user_session(request)
+        user_session, session_refreshed = await refresh_session_profile(user_session)
+        user_session, identity_refreshed = await _ensure_internal_identity(user_session)
+        session_refreshed = session_refreshed or identity_refreshed
+        strings = dict(strings)
+
+        discord_login_url = discord_oauth_authorize_url(state)
+        roblox_login_url = roblox_api.oauth_authorize_url(state)
+
+        strings["top_actions"] = build_user_chip(
+            user_session,
+            discord_login_url=discord_login_url,
+            roblox_login_url=roblox_login_url,
+        )
+
+        content = f"""
+        <section class="hero hero__card--compact">
+          <div class="hero__card hero__card--compact">
+            <h1>{html.escape(strings.get("how_it_works", "How it works"))}</h1>
+            <p class="muted">Link either account, follow the clear appeal flow, and keep all moderators informed.</p>
+          </div>
+        </section>
+        <section class="grid grid--stacked">
+          <article class="card">
+            <h2>1. Authenticate</h2>
+            <p class="muted">Start by signing in with Discord or Roblox. Each login seeds the internal user record.</p>
+          </article>
+          <article class="card">
+            <h2>2. Link both accounts</h2>
+            <p class="muted">Connect your other platform from the header actions or live prompts so appeals merge seamlessly.</p>
+          </article>
+          <article class="card">
+            <h2>3. Check status</h2>
+            <p class="muted">Use the Status page to review every appeal tied to your linked accounts, including moderator decisions and status updates.</p>
+          </article>
+          <article class="card">
+            <h2>4. Submit respectfully</h2>
+            <p class="muted">Once both accounts are linked, choose the correct form, explain the context, and commit to improved behaviour.</p>
+          </article>
+          <div class="btn-row" style="flex-wrap:wrap; gap:10px;">
+            <a class="btn" href="/status">{html.escape(strings.get("status_cta", "Track my appeal"))}</a>
+            <a class="btn btn--ghost" href="/">{strings.get("error_home")}</a>
+          </div>
+        </section>
+        """
+
+        response = HTMLResponse(
+            render_page("How it works", content, lang=current_lang, strings=strings),
+            headers={"Cache-Control": "no-store"},
+        )
+        maybe_persist_session(request, response, user_session, session_refreshed)
+        response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+        return response
     
     @staticmethod
     async def render_discord_appeal_page(
@@ -749,6 +673,7 @@ class PageRenderer:
         strings: Dict[str, str],
         current_session: Optional[Dict[str, Any]] = None, # Added parameter
         roblox_login_url: Optional[str] = None,
+        history: Optional[List[Dict[str, Any]]] = None,
     ) -> HTMLResponse:
         """Render the Discord appeal page."""
         uname_label = f"{user['username']}#{user.get('discriminator', '0')}"
@@ -814,6 +739,8 @@ class PageRenderer:
           </script>
         """
         
+        history_html = render_history_items(history or [], format_timestamp=format_timestamp)
+
         content = f"""
           <div class="grid-2">
             <div class="form-card">
@@ -853,11 +780,9 @@ class PageRenderer:
                 <div class="details-body">{message_cache_html}</div>
               </details>
 
-              {roblox_login_prompt}
-
               <details class="details">
                 <summary>Your history</summary>
-                <div class="details-body">{render_history_items([], format_timestamp=format_timestamp)}</div>
+                <div class="details-body">{history_html}</div>
               </details>
               <div class="btn-row" style="margin-top:10px;">
                 <a class="btn secondary" href="/">Back home</a>
@@ -885,6 +810,7 @@ class PageRenderer:
         strings: Dict[str, str],
         current_session: Optional[Dict[str, Any]] = None,
         discord_login_url: Optional[str] = None,
+        history: Optional[List[Dict[str, Any]]] = None,
     ) -> HTMLResponse:
         """Render the Roblox appeal page."""
         user_id = user["sub"]
@@ -907,6 +833,8 @@ class PageRenderer:
                 <a class="btn btn--discord btn--wide" href="{html.escape(discord_login_url)}" target="_blank" rel="noopener noreferrer">{html.escape(prompt_cta)}</a>
               </div>
             """
+
+        history_html = render_history_items(history or [], format_timestamp=format_timestamp)
 
         content = f"""
           <div class="grid-2">
@@ -934,6 +862,10 @@ class PageRenderer:
                   </div>
                 </div>
               </details>
+              <details class="details">
+                <summary>Your linked appeals</summary>
+                <div class="details-body">{history_html}</div>
+              </details>
             </div>
           </div>
         """
@@ -953,6 +885,12 @@ class PageRenderer:
 async def home(request: Request, lang: Optional[str] = None):
     """Render the home page."""
     return await PageRenderer.render_home_page(request, lang)
+
+
+@router.get("/how-it-works", response_class=HTMLResponse)
+async def how_it_works(request: Request, lang: Optional[str] = None):
+    """Render the how it works page."""
+    return await PageRenderer.render_how_it_works_page(request, lang)
 
 
 @router.get("/tos", response_class=HTMLResponse)
@@ -990,86 +928,8 @@ async def privacy():
 
 @router.get("/status", response_class=HTMLResponse)
 async def status_page(request: Request, lang: Optional[str] = None):
-    """Render the status page, which will fetch data from /status/data."""
-    current_lang = await detect_language(request, lang)
-    strings = await get_strings(current_lang)
-    ip = get_client_ip(request)
-    asyncio.create_task(send_log_message(f"[visit_status] ip_hash={hash_ip(ip)} lang={current_lang}"))
-
-    session = read_user_session(request)
-    session, session_refreshed = await refresh_session_profile(session)
-    strings = dict(strings)
-
-    if not session:
-        state_token = issue_state_token(ip)
-        state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
-        discord_login_url = discord_oauth_authorize_url(state)
-        roblox_login_url = roblox_api.oauth_authorize_url(state)
-        
-        strings["top_actions"] = build_user_chip(None, discord_login_url=discord_login_url, roblox_login_url=roblox_login_url)
-        
-        content = f"""
-          <div class="card status danger">
-            <h1 style="margin-bottom:10px;">Sign in required</h1>
-            <p class="muted">Sign in to view your appeal history and live status.</p>
-            <a class="btn btn--discord" href="{discord_login_url}"><span class="btn__icon" aria-hidden="true">⌁</span>{strings['login']}</a>
-            <a class="btn btn--roblox" href="{roblox_login_url}">{strings['login_roblox']}</a>
-          </div>
-        """
-        
-        resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), status_code=401, headers={"Cache-Control": "no-store"})
-        resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
-        return resp
-
-    discord_login_url = None
-    roblox_login_url = None
-    if not session.get("uid") or not session.get("ruid"):
-        state_token = issue_state_token(ip)
-        state = serializer.dumps({"nonce": secrets.token_urlsafe(8), "lang": current_lang, "state_id": state_token})
-        discord_login_url = discord_oauth_authorize_url(state)
-        roblox_login_url = roblox_api.oauth_authorize_url(state)
-
-    strings["top_actions"] = build_user_chip(
-        session,
-        discord_login_url=discord_login_url,
-        roblox_login_url=roblox_login_url
-    )
-    display_name = html.escape(clean_display_name(session.get('display_name') or session.get('uname', 'you')))
-
-    history_html = """
-    <div class="history-wrapper">
-      <div class="status-heading">
-        <div>
-          <div class="status-chip" id="liveStatusChip">Loading…</div>
-          <p class="muted small">Latest ref: <span id="liveRef">—</span></p>
-          <p class="muted small">Decision: <span id="liveDecision">Pending</span></p>
-        </div>
-        <div class="muted small" id="historyCount">0 appeals</div>
-      </div>
-
-      <div id="history-empty" class="muted" style="margin-bottom:10px;">Loading history…</div>
-      <ul class="history-list" id="history-list" hidden></ul>
-    </div>
-
-    """
-
-    content = f"""
-      <div class="card status-card">
-        <div class="status-heading">
-          <h1>Appeal history for {display_name}</h1>
-          <p class="muted">Monitor decisions and peer context for this ban review.</p>
-        </div>
-        {history_html}
-        <div class="btn-row" style="margin-top:10px;">
-          <a class="btn secondary" href="/">Back home</a>
-        </div>
-      </div>
-    """
-    
-    resp = HTMLResponse(render_page("Appeal status", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
-    maybe_persist_session(request, resp, session, session_refreshed)
-    resp.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
-    return resp
+    """Render the status page with combined appeal history and linking prompts."""
+    return await PageRenderer.render_status_page(request, lang)
 
 @router.get("/status/data")
 async def get_status_data(request: Request):
@@ -1078,40 +938,8 @@ async def get_status_data(request: Request):
     if not session:
         return {"history": []}
 
-    internal_user_id = session.get("internal_user_id")
-    if not internal_user_id:
-        return {"history": []} # Should not happen if session is valid
-    
-    all_appeals = []
-
-    # Fetch Discord-specific appeals using internal_user_id
-    discord_appeals = await fetch_appeal_history(internal_user_id, limit=25)
-    for item in discord_appeals:
-        item['platform'] = 'Discord'
-        all_appeals.append(item)
-
-    # Fetch Roblox appeals using internal_user_id
-    roblox_appeals = await appeal_db.get_roblox_appeal_history(internal_user_id, limit=50)
-    for item in roblox_appeals:
-        item['platform'] = 'Roblox'
-        item['ban_reason'] = item.get('short_ban_reason')
-        item['appeal_id'] = item.get('id')
-        all_appeals.append(item)
-    
-    # Use a dictionary to create a unique list of appeals.
-    # The key is a tuple of (platform, id) to ensure uniqueness across different appeal types.
-    unique_appeals = {}
-    for item in all_appeals:
-        platform = item.get("platform")
-        # For Roblox, the unique ID is 'id'. For Discord, it's 'appeal_id'.
-        item_id = item.get("id") if platform == "Roblox" else item.get("appeal_id")
-        if platform and item_id:
-            unique_appeals[(platform, item_id)] = item
-    
-    # Sort the unique appeals by creation date
-    sorted_appeals = sorted(list(unique_appeals.values()), key=lambda x: x.get("created_at", "0"), reverse=True)
-
-    return {"history": sorted_appeals[:50]}
+    history = await _collect_combined_history(session)
+    return {"history": history[:50]}
 
 
 @router.get("/logout")
@@ -1230,6 +1058,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         "message_cache": message_cache,
     })
     
+    history = await _collect_combined_history(updated_session)
     roblox_login_url = None
     if not updated_session.get("ruid"):
         roblox_link_state = serializer.dumps({
@@ -1250,6 +1079,7 @@ async def callback(request: Request, code: str, state: str, lang: Optional[str] 
         strings,
         current_session=updated_session,
         roblox_login_url=roblox_login_url,
+        history=history,
     )
 
 
@@ -1328,6 +1158,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         "iat": time.time(),
         "lang": current_lang,
     })
+    history = await _collect_combined_history(updated_session_for_roblox_context)
     link_state = serializer.dumps({
         "nonce": secrets.token_urlsafe(8),
         "lang": current_lang,
@@ -1347,6 +1178,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         strings,
         current_session=updated_session_for_roblox_context,
         discord_login_url=discord_login_url,
+        history=history,
     )
 
 
@@ -1356,6 +1188,7 @@ async def roblox_resume(request: Request, lang: Optional[str] = None):
     current_lang = await detect_language(request, lang)
     strings = await get_strings(current_lang)
     session = read_user_session(request)
+    session, _ = await _ensure_internal_identity(session)
     if not session or not session.get("ruid"):
         return RedirectResponse("/")
 
@@ -1404,6 +1237,8 @@ async def roblox_resume(request: Request, lang: Optional[str] = None):
         "nickname": session.get("display_name") or session.get("runame"),
     }
 
+    history = await _collect_combined_history(session)
+
     return await PageRenderer.render_roblox_appeal_page(
         request,
         user_info,
@@ -1413,6 +1248,7 @@ async def roblox_resume(request: Request, lang: Optional[str] = None):
         strings,
         current_session=session,
         discord_login_url=discord_login_url,
+        history=history,
     )
 
 
@@ -1422,6 +1258,7 @@ async def discord_resume(request: Request, lang: Optional[str] = None):
     current_lang = await detect_language(request, lang)
     strings = await get_strings(current_lang)
     session = read_user_session(request)
+    session, _ = await _ensure_internal_identity(session)
     if not session or not session.get("uid"):
         return RedirectResponse("/")
 
@@ -1474,6 +1311,8 @@ async def discord_resume(request: Request, lang: Optional[str] = None):
         "global_name": session.get("display_name") or session.get("uname"),
     }
 
+    history = await _collect_combined_history(session)
+
     return await PageRenderer.render_discord_appeal_page(
         request,
         user,
@@ -1484,6 +1323,7 @@ async def discord_resume(request: Request, lang: Optional[str] = None):
         strings,
         current_session=session,
         roblox_login_url=roblox_login_url,
+        history=history,
     )
 
 
@@ -1511,7 +1351,11 @@ async def roblox_submit(
     ip = get_client_ip(request)
     enforce_ip_rate_limit(ip)
     
-    eligible, reason = await AppealService.check_rate_limit(internal_user_id, ip) # Use internal_user_id for rate limit
+    eligible, reason = await AppealService.check_rate_limit(
+        internal_user_id,
+        ip,
+        legacy_keys=[roblox_user_id],
+    ) # Use internal_user_id for rate limit
     if not eligible:
         raise HTTPException(status_code=429, detail=reason)
 
@@ -1557,7 +1401,7 @@ async def roblox_submit(
             discord_channel_id=message["channel_id"],
         )
 
-    await AppealService.mark_session_used(token_hash, roblox_user_id)
+    await AppealService.mark_session_used(token_hash, internal_user_id)
     _appeal_locked[internal_user_id] = True # Use internal_user_id for appeal locked state
     
     current_lang = data.get("lang", "en")
@@ -1599,6 +1443,9 @@ async def submit(
     # Check if session was used
     token_hash = hash_value(session)
     user_id = data["uid"]
+    internal_user_id = data.get("internal_user_id")
+    if not internal_user_id:
+        raise HTTPException(status_code=400, detail="Internal user ID not found in session.")
     
     if await AppealService.check_session_used(token_hash, user_id):
         raise HTTPException(status_code=409, detail="This appeal was already submitted.")
@@ -1615,7 +1462,11 @@ async def submit(
     user_agent = request.headers.get("User-Agent", "unknown")
     enforce_ip_rate_limit(ip)
     
-    eligible, reason = await AppealService.check_rate_limit(user_id, ip)
+    eligible, reason = await AppealService.check_rate_limit(
+        internal_user_id,
+        ip,
+        legacy_keys=[user_id],
+    )
     if not eligible:
         raise HTTPException(status_code=429, detail=reason)
     
@@ -1627,7 +1478,7 @@ async def submit(
     )
     
     # Update rate limit
-    _appeal_rate_limit[user_id] = now
+    _appeal_rate_limit[internal_user_id] = now
     
     # Create appeal
     appeal_id = str(uuid.uuid4())[:8]
@@ -1650,7 +1501,6 @@ async def submit(
     )
     
     # Store in Supabase if available
-    internal_user_id = data.get("internal_user_id") # Retrieve internal_user_id from session data
     if is_supabase_ready():
         await log_appeal_to_supabase(
             appeal_id,
@@ -1676,7 +1526,7 @@ async def submit(
     )
     
     # Mark session as used and lock appeal
-    await AppealService.mark_session_used(token_hash, user_id)
+    await AppealService.mark_session_used(token_hash, internal_user_id)
     _appeal_locked[internal_user_id] = True # Use internal_user_id for appeal locked state
     
     

@@ -61,7 +61,7 @@ async def health(request: Request):
             "title": "Discord integration",
             "state": "up" if online else "down",
             "label": bot_status,
-            "body": "Receives moderation events and updates appeal activity.",
+            "body": "Receives events and updates appeal activity.",
             "id": "discord",
         },
         {

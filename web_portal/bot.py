@@ -254,9 +254,13 @@ if discord:
             try:
                 if announce_text.lower() == "clear":
                     state._announcement_text = None
+                    from .services.supabase import set_portal_flag
+                    await set_portal_flag("announcement", None)
                     await message.channel.send("Appeals announcement cleared.")
                 elif announce_text:
                     state._announcement_text = announce_text
+                    from .services.supabase import set_portal_flag
+                    await set_portal_flag("announcement", announce_text)
                     await message.channel.send("Appeals announcement set.")
                 else:
                     await message.channel.send("Usage: !appeals_announce <content|CLEAR>")

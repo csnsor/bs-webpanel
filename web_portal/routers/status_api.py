@@ -5,7 +5,7 @@ import time
 from fastapi import APIRouter, Request
 
 from ..services.sessions import read_user_session
-from ..services.supabase import fetch_appeal_history, is_supabase_ready
+from ..services.supabase import fetch_appeal_history, is_supabase_ready, get_portal_flag
 from ..settings import STATUS_DATA_CACHE_TTL_SECONDS
 from ..state import _status_data_cache, _announcement_text, _session_epoch
 from ..utils import format_timestamp
@@ -48,7 +48,9 @@ async def status_data(request: Request):
 
 @router.get("/live/announcement")
 async def live_announcement():
+    # Try Supabase-backed flag; fall back to in-memory.
+    ann = await get_portal_flag("announcement", None)
     return {
-        "announcement": _announcement_text,
+        "announcement": ann if ann is not None else _announcement_text,
         "epoch": _session_epoch,
     }

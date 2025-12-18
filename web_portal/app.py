@@ -82,6 +82,9 @@ def create_app() -> FastAPI:
         response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
         response.headers.setdefault("Cross-Origin-Embedder-Policy", "require-corp")
         response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+        # If a prior handler marked the request for forced logout, clear the session cookie
+        if getattr(request.state, "force_logout", False):
+            response.delete_cookie("bs_session")
         return response
 
     @app.exception_handler(StarletteHTTPException)

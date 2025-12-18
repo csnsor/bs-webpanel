@@ -137,6 +137,10 @@ def read_user_session(request: Request) -> Optional[dict]:
         remote_epoch = get_portal_flag_sync("session_epoch", _session_epoch)
         if data.get("epoch") is not None and data.get("epoch") != remote_epoch:
             logging.info("Session epoch mismatch; forcing logout.")
+            try:
+                request.state.force_logout = True
+            except Exception:
+                pass
             return None
         return data
     except BadSignature:

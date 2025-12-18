@@ -72,21 +72,28 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     current_announcement = getattr(state, "_announcement_text", None)
     current_epoch = getattr(state, "_session_epoch", 0)
     announce_block = f"window.BS_ANNOUNCE = {json.dumps({'text': current_announcement, 'epoch': current_epoch})};"
-    if current_announcement:
-        announcement_html = f"""
-        <div class="announcement">
-          <div class="announcement__dot"></div>
-          <div class="announcement__text">{html.escape(current_announcement)}</div>
-        </div>
-        """
     live_script = """
       (function(){
         const banner = document.getElementById("live-announcement");
         let local = (window.BS_ANNOUNCE || {epoch:0,text:null});
         function render(text) {
           if (!banner) return;
-          if (!text) { banner.innerHTML = ""; return; }
-          banner.innerHTML = '<div class="announcement"><div class="announcement__dot"></div><div class="announcement__text">'+text+'</div></div>';
+          banner.innerHTML = "";
+          if (!text) { return; }
+          const card = document.createElement("div");
+          card.className = "announcement-card";
+          card.innerHTML = `
+            <div class="announcement__left">
+              <div class="announcement__dot"></div>
+              <div class="announcement__copy">
+                <div class="announcement__label">Announcement</div>
+                <div class="announcement__text"></div>
+              </div>
+            </div>
+            <div class="announcement__badge">Live</div>
+          `;
+          card.querySelector(".announcement__text").textContent = text;
+          banner.appendChild(card);
         }
         render(local.text);
         async function tick(){

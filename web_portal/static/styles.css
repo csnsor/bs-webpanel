@@ -298,11 +298,34 @@ a:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-7);
+  gap: var(--space-6);
   padding: var(--space-8) 0;
   flex-wrap: wrap;
   max-width: var(--content-width);
   margin-inline: auto;
+}
+
+.top__left,
+.top__center,
+.top__right {
+  display: flex;
+  align-items: center;
+}
+
+.top__left {
+  gap: var(--space-5);
+}
+
+.top__center {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.top__right {
+  gap: var(--space-3);
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  white-space: nowrap;
 }
 
 /* =============================================================================
@@ -402,8 +425,8 @@ a:hover {
 .nav {
   display: flex;
   align-items: center;
-  gap: var(--space-7);
-  padding: var(--space-4) var(--space-6);
+  gap: var(--space-6);
+  padding: var(--space-3) var(--space-5);
   border: 1px solid var(--border-color-2);
   border-radius: var(--radius-full);
   background: var(--card-bg-3);
@@ -412,7 +435,7 @@ a:hover {
 .nav__link {
   font-size: var(--font-base);
   color: rgba(238, 242, 255, 0.92);
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-full);
   transition: background var(--transition-fast);
 }
@@ -435,7 +458,7 @@ a:hover {
 
 .top__actions .btn,
 .top__actions .chip {
-  height: 40px;
+  height: 38px;
   align-items: center;
   padding-inline: var(--space-4);
   font-size: 14px;
@@ -450,14 +473,21 @@ a:hover {
   background: rgba(46, 204, 113, 0.15);
   color: #2ecc71;
   font-weight: 600;
+  border-color: rgba(46, 204, 113, 0.24);
 }
 
 .top__actions .btn--primary {
   font-weight: 700;
+  order: 2;
 }
 
 .top__actions .btn:not(.btn--primary) {
-  opacity: 0.85;
+  opacity: 0.82;
+  order: 3;
+}
+
+.top__actions .chip {
+  order: 1;
 }
 
 @media (max-width: 900px) {
@@ -899,6 +929,11 @@ a:hover {
   font-size: var(--font-lg);
   letter-spacing: var(--tracking-normal);
   font-weight: 700;
+}
+
+.card--wide {
+  max-width: 720px;
+  padding: 32px;
 }
 
 /* =============================================================================

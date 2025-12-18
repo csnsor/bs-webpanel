@@ -446,24 +446,26 @@ class PageRenderer:
         </h1>
 
         <p class="hero__sub">
-            Sign in, check your status, and submit an appeal.
+            Check your appeal status and understand the process.
         </p>
-
-        <div class="btn-row">
-            <a class="btn btn--primary" href="{discord_login_url}">Discord</a>
-            <a class="btn btn--roblox" href="{roblox_login_url}">Roblox</a>
-            <a class="btn btn--ghost" href="/status">Status</a>
-        </div>
         </section>
 
-        <section class="card">
+        <section class="card card--wide">
         <h2 class="card__title">How it works</h2>
+
         <p class="muted">
-            You can link Discord and Roblox in any order. Appeals and decisions appear
-            in one place.
+            Appeals are handled through a single account that links your Discord and
+            Roblox identities. You can connect either one first — everything is merged
+            automatically.
         </p>
 
-        <div class="btn-row">
+        <p class="muted">
+            Once linked, you can submit appeals, track updates, and review moderator
+            decisions in one place.
+        </p>
+
+        <div class="btn-row" style="margin-top:16px;">
+            <a class="btn btn--primary" href="/status">View appeal status</a>
             <a class="btn btn--ghost" href="/how-it-works">Learn more</a>
         </div>
         </section>

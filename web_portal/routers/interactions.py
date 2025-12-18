@@ -20,7 +20,7 @@ from ..services.discord_api import (
     post_channel_message,
 )
 from ..services.interactions import respond_ephemeral_embed, update_message, verify_signature
-from ..services.supabase import fetch_appeal_record, update_appeal_status
+from ..services.supabase import fetch_appeal_record, update_appeal_status, update_staff_stats, fetch_reports_for_roblox_id
 from ..settings import (
     DISCORD_MODERATOR_ROLE_ID,
     READD_GUILD_ID,
@@ -60,6 +60,21 @@ def create_updated_embed(
         
     return embed
 
+
+def _extract_evidence_links(reports: Optional[list]) -> list:
+    """Extract only URL tokens from report evidence strings."""
+    links = []
+    seen = set()
+    for report in reports or []:
+        evidence = str(report.get("evidence") or "")
+        tokens = evidence.replace("\n", " ").split()
+        for token in tokens:
+            if token.startswith("http://") or token.startswith("https://"):
+                if token not in seen:
+                    seen.add(token)
+                    links.append(token)
+    return links
+
 # --- Roblox Appeal Handlers ---
 
 async def handle_roblox_initial_accept(parts: list, mod_id: str, mod_name: str, embed: dict, payload: dict) -> Tuple[dict, Optional[str], Optional[dict]]:
@@ -71,7 +86,10 @@ async def handle_roblox_initial_accept(parts: list, mod_id: str, mod_name: str, 
         return embed, "This appeal has already been processed."
 
     await appeal_db.update_roblox_appeal_moderation_status(appeal_id, "pending_elevation", mod_id, mod_name)
-    
+
+    reports = await fetch_reports_for_roblox_id(appeal["roblox_id"], limit=25)
+    evidence_links = _extract_evidence_links(reports)
+
     new_message = await post_roblox_final_appeal_embed(
         appeal_id=appeal_id,
         roblox_username=appeal["roblox_username"],
@@ -79,6 +97,8 @@ async def handle_roblox_initial_accept(parts: list, mod_id: str, mod_name: str, 
         appeal_reason=appeal["appeal_text"],
         initial_moderator_id=mod_id,
         short_ban_reason=appeal.get("short_ban_reason"),
+        discord_user_id=appeal.get("discord_user_id"),
+        evidence_links=evidence_links,
     )
 
     if new_message and new_message.get("id"):
@@ -107,6 +127,7 @@ async def handle_roblox_initial_decline(parts: list, mod_id: str, mod_name: str,
     # Delete the initial message and log it
     await delete_message(payload["channel_id"], payload["message"]["id"])
     logging.info(f"Roblox appeal {appeal_id} declined by {mod_name} ({mod_id}) and message deleted.")
+    await update_staff_stats(mod_id, mod_name, accepted=False, created_at=appeal.get("created_at"))
         
     return create_updated_embed(embed, "declined", mod_id), None, None
 
@@ -118,6 +139,11 @@ async def handle_roblox_final_accept(parts: list, mod_id: str, mod_name: str, em
     if appeal["status"] != "pending_elevation":
         return embed, "This appeal is not pending final review."
 
+    reports = await fetch_reports_for_roblox_id(appeal["roblox_id"], limit=25)
+    evidence_links = _extract_evidence_links(reports)
+    evidence_text = "\n".join(evidence_links[:8]) if evidence_links else "No evidence links found."
+    discord_label = f"<@{appeal.get('discord_user_id')}>" if appeal.get("discord_user_id") else "Not linked"
+
     unban_success = await roblox_api.unban_user(appeal["roblox_id"])
     if not unban_success:
         return create_updated_embed(embed, "declined", mod_id, "Failed to unban from Roblox via API."), "Roblox API unban failed."
@@ -125,13 +151,20 @@ async def handle_roblox_final_accept(parts: list, mod_id: str, mod_name: str, em
     await appeal_db.update_roblox_appeal_moderation_status(appeal_id, "accepted", mod_id, mod_name, is_active=False)
     if appeal.get("internal_user_id"):
         _appeal_locked[appeal["internal_user_id"]] = True
+    await update_staff_stats(mod_id, mod_name, accepted=True, created_at=appeal.get("created_at"))
     
     if appeal.get("discord_user_id"):
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Accepted", "description": "Your Roblox appeal has been accepted and you have been unbanned.", "color": 0x2ECC71})
         
     log_embed = {
         "title": f"Roblox Appeal Accepted ({appeal_id})",
-        "description": f"**Appealing Player:** {appeal['roblox_username']} ({appeal['roblox_id']})\n**Ban reason:** {appeal['short_ban_reason']}\n**Reason:** {appeal['appeal_text']}",
+        "description": (
+            f"**Appealing Player:** {appeal['roblox_username']} ({appeal['roblox_id']})\n"
+            f"**Discord:** {discord_label}\n"
+            f"**Ban reason:** {appeal['short_ban_reason']}\n"
+            f"**Appeal:** {appeal['appeal_text']}\n"
+            f"**Evidence:** {evidence_text}"
+        ),
         "color": 0x2ECC71,
         "fields": [
             {"name": "Moderator", "value": f"<@{mod_id}> ({mod_name})", "inline": False},
@@ -156,6 +189,7 @@ async def handle_roblox_final_decline(parts: list, mod_id: str, mod_name: str, e
     await appeal_db.update_roblox_appeal_moderation_status(appeal_id, "declined", mod_id, mod_name, is_active=False)
     if appeal.get("internal_user_id"):
         _appeal_locked[appeal["internal_user_id"]] = True
+    await update_staff_stats(mod_id, mod_name, accepted=False, created_at=appeal.get("created_at"))
     
     if appeal.get("discord_user_id"):
         await dm_user(appeal["discord_user_id"], {"title": "Roblox Appeal Declined", "description": "Your Roblox appeal was declined during final review.", "color": 0xE74C3C})
@@ -180,6 +214,7 @@ async def handle_discord_accept(parts: list, mod_id: str, mod_name: str, embed: 
 
     await update_appeal_status(appeal_id, "accepted", mod_id, dm_delivered=dm_delivered)
     _appeal_locked[internal_user_id] = True
+    await update_staff_stats(mod_id, mod_name, accepted=True, created_at=(appeal_record or {}).get("created_at"))
     
     note = f"Unban {'OK' if unban_success else 'Fail'}; Re-add {'OK' if readd_success else 'Fail'}; DM {'OK' if dm_delivered else 'Fail'}."
     return create_updated_embed(embed, "accepted", mod_id, note), None, None
@@ -199,6 +234,7 @@ async def handle_discord_decline(parts: list, mod_id: str, mod_name: str, embed:
 
     await update_appeal_status(appeal_id, "declined", mod_id, dm_delivered=dm_delivered)
     await maybe_remove_from_dm_guild(user_id)
+    await update_staff_stats(mod_id, mod_name, accepted=False, created_at=(appeal_record or {}).get("created_at"))
     
     note = f"User has been notified by DM (delivered: {dm_delivered})."
     return create_updated_embed(embed, "declined", mod_id, note), None, None

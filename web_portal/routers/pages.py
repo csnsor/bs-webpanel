@@ -92,6 +92,21 @@ def _timestamp_from_value(value: Optional[Any]) -> float:
     return 0.0
 
 
+def _extract_evidence_links_from_reports(reports: List[Dict[str, Any]]) -> List[str]:
+    """Return only URL tokens from report evidence strings, de-duplicated."""
+    links: List[str] = []
+    seen = set()
+    for report in reports or []:
+        evidence = str(report.get("evidence") or "")
+        tokens = evidence.replace("\n", " ").split()
+        for token in tokens:
+            if token.startswith("http://") or token.startswith("https://"):
+                if token not in seen:
+                    seen.add(token)
+                    links.append(token)
+    return links
+
+
 async def _collect_combined_history(session: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if not session:
         return []
@@ -1398,6 +1413,12 @@ async def roblox_submit(
     if len(appeal_reason or "") > 2000:
         raise HTTPException(status_code=400, detail="Appeal reason too long. Please keep it under 2000 characters.")
 
+    current_session = read_user_session(request)
+    current_session, _ = await _ensure_internal_identity(current_session)
+    discord_user_id = (current_session or {}).get("uid")
+    if not discord_user_id:
+        raise HTTPException(status_code=400, detail="Please link your Discord account to continue your Roblox appeal and receive updates.")
+
     token_hash = hash_value(session)
     roblox_user_id = data["ruid"]
     internal_user_id = data.get("internal_user_id") # Retrieve internal_user_id from session data
@@ -1423,6 +1444,9 @@ async def roblox_submit(
 
     _appeal_rate_limit[internal_user_id] = time.time() # Use internal_user_id for rate limit
 
+    reports = await fetch_reports_for_roblox_id(roblox_user_id, limit=25)
+    evidence_links = _extract_evidence_links_from_reports(reports)
+
     # discord_user_id will be handled by the internal user record in the database
     # No need to call bloxlink_api.get_discord_id_from_roblox_id here anymore
 
@@ -1433,7 +1457,7 @@ async def roblox_submit(
         appeal_text=appeal_reason,
         ban_data=data.get("ban_data"),
         short_ban_reason=data.get("ban_reason_short", "N/A"),
-        discord_user_id=None, # Discord ID from session is no longer reliable; use internal_user_id
+        discord_user_id=discord_user_id,
     )
 
     if not appeal_record or not appeal_record.get("id"):
@@ -1448,7 +1472,8 @@ async def roblox_submit(
         roblox_id=roblox_user_id,
         short_ban_reason=data.get("ban_reason_short", "N/A"),
         appeal_reason=appeal_reason,
-        discord_user_id=None # Discord ID from session is no longer reliable; use internal_user_id for notification logic if needed
+        discord_user_id=discord_user_id,
+        evidence_links=evidence_links,
     )
     
     if message and message.get("id"):

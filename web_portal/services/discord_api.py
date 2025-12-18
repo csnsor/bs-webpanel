@@ -336,16 +336,20 @@ async def post_roblox_initial_appeal_embed(
     short_ban_reason: str,
     appeal_reason: str,
     discord_user_id: Optional[str],
+    evidence_links: Optional[List[str]] = None,
 ) -> Optional[dict]:
     """Posts the initial Roblox appeal embed for the first stage of moderation."""
+    evidence_links = evidence_links or []
+    evidence_value = "\n".join(evidence_links[:8]) if evidence_links else "No evidence links found."
     embed = {
         "title": f"Roblox Appeal Review (Step 1) #{appeal_id}",
         "color": 0x3498DB,  # Blue for informational
         "description": (
             f"**User:** {roblox_username} (Roblox ID: {roblox_id})\n"
-            f"**Discord User:** {f'<@{discord_user_id}>' if discord_user_id else 'N/A'}\n"
+            f"**Discord:** {f'<@{discord_user_id}>' if discord_user_id else 'Not linked (required)'}\n"
             f"**Ban reason:** {short_ban_reason}\n"
-            f"**Appeal:** {appeal_reason}"
+            f"**Appeal:** {appeal_reason}\n"
+            f"**Evidence:** {evidence_value}"
         ),
         "footer": {"text": f"Appeal ID: {appeal_id}"},
         "url": f"https://www.roblox.com/users/{roblox_id}/profile",
@@ -377,15 +381,21 @@ async def post_roblox_final_appeal_embed(
     appeal_reason: str,
     initial_moderator_id: str,
     short_ban_reason: Optional[str] = None,
+    discord_user_id: Optional[str] = None,
+    evidence_links: Optional[List[str]] = None,
 ) -> Optional[dict]:
     """Posts the final Roblox appeal embed for elevated moderation."""
+    evidence_links = evidence_links or []
+    evidence_value = "\n".join(evidence_links[:8]) if evidence_links else "No evidence links found."
     embed = {
         "title": f"Roblox Unban Request (Step 2) #{appeal_id}",
         "color": 0xFF0000,  # Red for Roblox
         "description": (
             f"**User:** {roblox_username} (Roblox ID: {roblox_id})\n"
+            f"**Discord:** {f'<@{discord_user_id}>' if discord_user_id else 'Not linked (required)'}\n"
             f"**Ban reason:** {short_ban_reason or 'N/A'}\n"
-            f"**Appeal:** {appeal_reason}\n\n"
+            f"**Appeal:** {appeal_reason}\n"
+            f"**Evidence:** {evidence_value}\n\n"
             f"Forwarded for final approval by <@{initial_moderator_id}>."
         ),
         "footer": {"text": f"Appeal ID: {appeal_id}"},

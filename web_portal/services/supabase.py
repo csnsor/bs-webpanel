@@ -4,6 +4,7 @@ import hashlib
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
 import httpx
@@ -285,3 +286,92 @@ async def fetch_reports_for_roblox_id(roblox_id: str, limit: int = 5) -> List[di
     except Exception as exc:
         logging.warning("Failed to fetch reports for roblox_id=%s: %s", roblox_id, exc)
         return []
+
+
+async def _fetch_staff_stats(user_id: str) -> Optional[dict]:
+    records = await supabase_request(
+        "get",
+        "staff_stats",
+        params={"user_id": f"eq.{user_id}", "limit": 1},
+    )
+    if records and isinstance(records, list):
+        return records[0]
+    return None
+
+
+def _parse_int(value: Any) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return 0
+
+
+async def update_staff_stats(
+    moderator_id: str,
+    moderator_name: str,
+    *,
+    accepted: bool,
+    created_at: Optional[Any] = None,
+) -> None:
+    """
+    Upsert staff stats for appeals handled.
+    accepted=True counts toward appeals_accepted, otherwise appeals_declined.
+    """
+    if not is_supabase_ready():
+        return
+
+    existing = await _fetch_staff_stats(moderator_id)
+    total_prev = _parse_int((existing or {}).get("total_appeals_handled"))
+    acc_prev = _parse_int((existing or {}).get("appeals_accepted"))
+    dec_prev = _parse_int((existing or {}).get("appeals_declined"))
+    avg_prev = None
+    try:
+        avg_prev = float((existing or {}).get("average_response_time_seconds") or 0)
+    except Exception:
+        avg_prev = None
+
+    total_new = total_prev + 1
+    acc_new = acc_prev + (1 if accepted else 0)
+    dec_new = dec_prev + (0 if accepted else 1)
+
+    response_seconds: Optional[float] = None
+    if created_at:
+        try:
+            if isinstance(created_at, str) and created_at.endswith("Z"):
+                created_at = f"{created_at[:-1]}+00:00"
+            if isinstance(created_at, str):
+                ts = datetime.fromisoformat(created_at).timestamp()
+            elif isinstance(created_at, (int, float)):
+                ts = float(created_at)
+            else:
+                ts = None
+            if ts:
+                response_seconds = max(0.0, time.time() - ts)
+        except Exception:
+            response_seconds = None
+
+    if response_seconds is not None:
+        if avg_prev is None or total_prev <= 0:
+            avg_new = response_seconds
+        else:
+            avg_new = ((avg_prev * total_prev) + response_seconds) / total_new
+    else:
+        avg_new = avg_prev
+
+    payload = {
+        "user_id": moderator_id,
+        "username": moderator_name,
+        "total_appeals_handled": str(total_new),
+        "appeals_accepted": str(acc_new),
+        "appeals_declined": str(dec_new),
+        "last_activity_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if avg_new is not None:
+        payload["average_response_time_seconds"] = avg_new
+
+    await supabase_request(
+        "post",
+        "staff_stats",
+        payload=payload,
+        prefer="resolution=merge-duplicates,return=representation",
+    )

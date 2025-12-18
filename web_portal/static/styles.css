@@ -451,45 +451,49 @@ a:hover {
 .top__actions {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: 10px;
   flex-wrap: nowrap;
-  white-space: nowrap;
 }
 
-.top__actions .btn,
-.top__actions .chip {
+/* normalize all items */
+.top__actions > * {
   height: 38px;
+  display: inline-flex;
   align-items: center;
-  padding-inline: var(--space-4);
-  font-size: 14px;
 }
 
+/* greeting: inline text, not a block */
 .top__actions .greeting {
-  font-weight: 600;
+  margin-right: 6px;
+  font-weight: 500;
   color: var(--text-muted);
 }
 
+/* status chip should feel passive */
 .top__actions .chip {
-  background: rgba(46, 204, 113, 0.15);
+  padding: 0 10px;
+  font-size: 13px;
+  background: rgba(46, 204, 113, 0.14);
   color: #2ecc71;
-  font-weight: 600;
-  border-color: rgba(46, 204, 113, 0.24);
 }
 
+/* primary CTA stands out, but not oversized */
 .top__actions .btn--primary {
-  font-weight: 700;
-  order: 2;
+  padding-inline: 14px;
+  font-weight: 600;
 }
 
-.top__actions .btn:not(.btn--primary) {
-  opacity: 0.82;
-  order: 3;
+/* secondary buttons quieter */
+.top__actions .btn--ghost {
+  opacity: 0.75;
 }
 
-.top__actions .chip {
-  order: 1;
+/* logout least important */
+.top__actions .btn.logout {
+  opacity: 0.55;
 }
 
+/* prevent crowding on smaller widths */
 @media (max-width: 900px) {
   .top__actions .greeting {
     display: none;

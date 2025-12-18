@@ -97,7 +97,6 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
             </a>
 
             <nav class="nav">
-              <a class="nav__link" href="/status">Appeal Status</a>
               <a class="nav__link" href="/how-it-works">How it works</a>
               <a class="nav__link" href="/tos">Terms</a>
               <a class="nav__link" href="/privacy">Privacy</a>

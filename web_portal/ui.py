@@ -109,6 +109,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
               <a class="nav__link" href="/tos">Terms</a>
               <a class="nav__link" href="/privacy">Privacy</a>
               <a class="nav__link" href="/status">Appeal Status</a>
+              <a class="nav__link" href="/health">Website Health</a>
               <a class="nav__link nav__link--muted" href="{INVITE_LINK}" rel="noreferrer">Discord</a>
             </nav>
 

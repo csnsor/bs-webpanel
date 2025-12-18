@@ -815,7 +815,7 @@ class PageRenderer:
     ) -> HTMLResponse:
         """Render the Roblox appeal page."""
         user_id = user["sub"]
-        uname_label = user.get("name") or user.get("preferred_username")
+        uname_label = user.get("preferred_username")
         display_name = clean_display_name(user.get("nickname") or uname_label)
         
         ban_history = await roblox_api.get_ban_history(user_id)

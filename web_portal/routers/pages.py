@@ -47,6 +47,7 @@ from ..services.supabase import (
     mark_session_token,
     resolve_internal_user_id,
     supabase_request,
+    fetch_reports_for_roblox_id,
 )
 from ..services.supabase import fetch_appeal_history, log_appeal_to_supabase
 from ..settings import (
@@ -794,6 +795,7 @@ class PageRenderer:
         strings: Dict[str, str],
         current_session: Optional[Dict[str, Any]] = None,
         discord_login_url: Optional[str] = None,
+        reports: Optional[List[Dict[str, Any]]] = None,
         history: Optional[List[Dict[str, Any]]] = None,
     ) -> HTMLResponse:
         """Render the Roblox appeal page."""
@@ -806,6 +808,40 @@ class PageRenderer:
         
         ban_reason = html.escape(short_reason)
         user_id_label = html.escape(str(user_id))
+
+        evidence_html = ""
+        rep_list = reports or []
+        if rep_list:
+            rows = []
+            for rep in rep_list:
+                evidence = html.escape(rep.get("evidence") or "")
+                reason = html.escape(rep.get("reason") or "N/A")
+                created = html.escape(format_timestamp(rep.get("created_at") or ""))
+                rep_id = html.escape(str(rep.get("id") or "-"))
+                rows.append(
+                    f"""
+                    <div class="row">
+                      <div class="row__left">
+                        <span class="pill pill--wait">Report</span>
+                        <span class="muted">Reason: {reason}</span>
+                      </div>
+                      <div class="row__right">
+                        <div class="row__meta">
+                          <span class="row__k">Report ID</span><span class="row__v">{rep_id}</span>
+                        </div>
+                        <div class="row__meta">
+                          <span class="row__k">Submitted</span><span class="row__v">{created}</span>
+                        </div>
+                        <div class="row__meta">
+                          <span class="row__k">Evidence</span><span class="row__v--wrap">{evidence}</span>
+                        </div>
+                      </div>
+                    </div>
+                    """
+                )
+            evidence_html = "<div class=\"list\">" + "".join(rows) + "</div>"
+        else:
+            evidence_html = "<div class='muted'>No report evidence found for this Roblox ID.</div>"
 
         login_prompt = ""
         if discord_login_url:
@@ -845,6 +881,10 @@ class PageRenderer:
                     <div class="kv-row"><div class="k">Reason</div><div class="v">{ban_reason}</div></div>
                   </div>
                 </div>
+              </details>
+              <details class="details">
+                <summary>Ban evidence</summary>
+                <div class="details-body">{evidence_html}</div>
               </details>
               <details class="details">
                 <summary>Your linked appeals</summary>
@@ -1169,6 +1209,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         "iat": time.time(),
         "lang": current_lang,
     })
+    reports = await fetch_reports_for_roblox_id(user_id, limit=25)
     history = await _collect_combined_history(updated_session_for_roblox_context)
     link_state = serializer.dumps({
         "nonce": secrets.token_urlsafe(8),
@@ -1194,6 +1235,7 @@ async def roblox_callback(request: Request, code: str, state: str, lang: Optiona
         strings,
         current_session=updated_session_for_roblox_context,
         discord_login_url=discord_login_url,
+        reports=reports,
         history=history,
     )
 
@@ -1236,6 +1278,7 @@ async def roblox_resume(request: Request, lang: Optional[str] = None):
         "lang": current_lang,
     })
 
+    reports = await fetch_reports_for_roblox_id(user_id, limit=25)
     link_state = serializer.dumps({
         "nonce": secrets.token_urlsafe(8),
         "lang": current_lang,
@@ -1264,6 +1307,7 @@ async def roblox_resume(request: Request, lang: Optional[str] = None):
         strings,
         current_session=session,
         discord_login_url=discord_login_url,
+        reports=reports,
         history=history,
     )
 

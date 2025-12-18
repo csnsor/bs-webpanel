@@ -258,3 +258,26 @@ async def update_appeal_status(
         "notes": notes,
     }
     await supabase_request("patch", SUPABASE_TABLE, params={"appeal_id": f"eq.{appeal_id}"}, payload=payload, prefer="return=minimal")
+
+
+async def fetch_reports_for_roblox_id(roblox_id: str, limit: int = 5) -> List[dict]:
+    """
+    Fetch recent reports for a Roblox user to show ban evidence context.
+    """
+    if not (roblox_id and is_supabase_ready()):
+        return []
+    try:
+        records = await supabase_request(
+            "get",
+            "reports",
+            params={
+                "reported_roblox_id": f"eq.{roblox_id}",
+                "order": "created_at.desc",
+                "limit": max(1, min(limit, 25)),
+                "select": "id,created_at,reason,evidence,status,ban_category,reportee_user_id",
+            },
+        )
+        return records or []
+    except Exception as exc:
+        logging.warning("Failed to fetch reports for roblox_id=%s: %s", roblox_id, exc)
+        return []

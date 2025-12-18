@@ -63,6 +63,7 @@ async def translate_text(text: str, target_lang: str = "en", source_lang: Option
     providers = [
         ("primary", LIBRETRANSLATE_URL),
         ("gtx", "https://translate.googleapis.com/translate_a/single"),
+        ("mymemory", "https://api.mymemory.translated.net/get"),
     ]
     for name, url in providers:
         try:
@@ -81,6 +82,17 @@ async def translate_text(text: str, target_lang: str = "en", source_lang: Option
                     # Google translate API style response: [[["translated","original",...]],...]
                     if data and isinstance(data, list) and data[0] and data[0][0]:
                         return data[0][0][0] or text
+            elif name == "mymemory":
+                params = {
+                    "q": text,
+                    "langpair": f"{source_lang or 'auto'}|{target_lang}",
+                }
+                resp = await client.get(url, params=params, timeout=8)
+                if resp.status_code == 200:
+                    data = resp.json() or {}
+                    translated = (data.get("responseData") or {}).get("translatedText")
+                    if translated:
+                        return translated
             else:
                 resp = await client.post(
                     url,

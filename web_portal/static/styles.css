@@ -708,6 +708,18 @@ a:hover {
   padding: var(--space-16) 0 var(--space-12);
 }
 
+.hero--home {
+  text-align: center;
+}
+
+.hero--home .hero__title,
+.hero--home .hero__sub,
+.hero--home .hero-sub {
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+
 .hero-card {
   background: linear-gradient(135deg, #11192d, #0f152b 60%);
   border: 1px solid var(--border-color-2);
@@ -938,6 +950,7 @@ a:hover {
 .card--wide {
   max-width: 720px;
   padding: 32px;
+  margin-inline: auto;
 }
 
 /* =============================================================================

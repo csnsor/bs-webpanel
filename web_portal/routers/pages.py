@@ -454,7 +454,7 @@ class PageRenderer:
     ) -> str:
         """Build the content for the home page."""
         return f"""
-        <section class="hero">
+        <section class="hero hero--home">
         <h1 class="hero__title">
             Resolve your ban the <span class="shine">right way</span>.
         </h1>

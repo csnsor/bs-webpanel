@@ -361,9 +361,9 @@ async def update_staff_stats(
     payload = {
         "user_id": moderator_id,
         "username": moderator_name,
-        "total_appeals_handled": str(total_new),
-        "appeals_accepted": str(acc_new),
-        "appeals_declined": str(dec_new),
+        "total_appeals_handled": total_new,
+        "appeals_accepted": acc_new,
+        "appeals_declined": dec_new,
         "last_activity_at": datetime.now(timezone.utc).isoformat(),
     }
     if avg_new is not None:
@@ -374,4 +374,5 @@ async def update_staff_stats(
         "staff_stats",
         payload=payload,
         prefer="resolution=merge-duplicates,return=representation",
+        params={"on_conflict": "user_id"},
     )

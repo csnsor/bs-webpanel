@@ -29,6 +29,34 @@ from ..settings import (
 )
 from ..state import _declined_users, _guild_name_cache, _user_tokens
 
+# Simple concurrency guard for Discord REST calls to smooth 429s
+_discord_semaphore = asyncio.Semaphore(5)
+
+
+async def _request_with_retry(method: str, url: str, *, json: Optional[dict] = None, headers: Optional[dict] = None, params: Optional[dict] = None, **kwargs):
+    client = get_http_client()
+    last_resp = None
+    for attempt in range(4):
+        async with _discord_semaphore:
+            resp = await client.request(
+                method,
+                url,
+                json=json,
+                headers=headers,
+                params=params,
+                **kwargs,
+            )
+        last_resp = resp
+        if resp.status_code != 429:
+            return resp
+        # Respect Retry-After when present
+        try:
+            retry_after = float(resp.headers.get("Retry-After", "1"))
+        except Exception:
+            retry_after = 1.0
+        await asyncio.sleep(min(retry_after, 10.0) + 0.2 * attempt)
+    return last_resp
+
 
 def oauth_authorize_url(state: str) -> str:
     return (
@@ -44,8 +72,10 @@ def oauth_authorize_url(state: str) -> str:
 async def exchange_code_for_token(code: str) -> dict:
     try:
         client = get_http_client()
-        resp = await client.post(
+        resp = await _request_with_retry(
+            "post",
             f"{DISCORD_API_BASE}/oauth2/token",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
             data={
                 "client_id": DISCORD_CLIENT_ID,
                 "client_secret": DISCORD_CLIENT_SECRET,
@@ -53,7 +83,6 @@ async def exchange_code_for_token(code: str) -> dict:
                 "code": code,
                 "redirect_uri": DISCORD_REDIRECT_URI,
             },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         resp.raise_for_status()
         return resp.json()
@@ -77,8 +106,8 @@ async def refresh_user_token(user_id: str) -> Optional[str]:
     if not refresh_token:
         return None
     try:
-        client = get_http_client()
-        resp = await client.post(
+        resp = await _request_with_retry(
+            "post",
             f"{DISCORD_API_BASE}/oauth2/token",
             data={
                 "client_id": DISCORD_CLIENT_ID,
@@ -109,8 +138,8 @@ async def get_valid_access_token(user_id: str) -> Optional[str]:
 
 
 async def fetch_discord_user(access_token: str) -> dict:
-    client = get_http_client()
-    resp = await client.get(
+    resp = await _request_with_retry(
+        "get",
         f"{DISCORD_API_BASE}/users/@me",
         headers={"Authorization": f"Bearer {access_token}"},
     )
@@ -125,8 +154,8 @@ async def post_channel_message(channel_id: str, *, content: Optional[str] = None
         payload["content"] = content
     if embed:
         payload["embeds"] = [embed]
-    client = get_http_client()
-    resp = await client.post(
+    resp = await _request_with_retry(
+        "post",
         f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
         json=payload,
@@ -140,8 +169,8 @@ async def post_channel_message(channel_id: str, *, content: Optional[str] = None
 
 
 async def fetch_ban_if_exists(user_id: str) -> Optional[dict]:
-    client = get_http_client()
-    resp = await client.get(
+    resp = await _request_with_retry(
+        "get",
         f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/bans/{user_id}",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
     )
@@ -165,8 +194,8 @@ async def fetch_guild_name(guild_id: str) -> Optional[str]:
         return cached[0]
 
     try:
-        client = get_http_client()
-        resp = await client.get(
+        resp = await _request_with_retry(
+            "get",
             f"{DISCORD_API_BASE}/guilds/{guild_id}",
             headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
         )
@@ -188,8 +217,8 @@ async def ensure_dm_guild_membership(user_id: str) -> bool:
     token = await get_valid_access_token(user_id)
     if not token:
         return False
-    client = get_http_client()
-    resp = await client.put(
+    resp = await _request_with_retry(
+        "put",
         f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/members/{user_id}",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
         json={"access_token": token},
@@ -197,7 +226,8 @@ async def ensure_dm_guild_membership(user_id: str) -> bool:
     added = resp.status_code in (200, 201, 204)
     if added and CLEANUP_DM_INVITES:
         try:
-            invite_resp = await client.get(
+            invite_resp = await _request_with_retry(
+                "get",
                 f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/invites",
                 headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
             )
@@ -206,7 +236,8 @@ async def ensure_dm_guild_membership(user_id: str) -> bool:
                     code = invite.get("code")
                     if not code:
                         continue
-                    await client.delete(
+                    await _request_with_retry(
+                        "delete",
                         f"{DISCORD_API_BASE}/invites/{code}",
                         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
                     )
@@ -227,8 +258,8 @@ async def maybe_remove_from_dm_guild(user_id: str, *, attempt: int = 0) -> None:
     """
     if not DM_GUILD_ID or not REMOVE_FROM_DM_GUILD_AFTER_DM:
         return
-    client = get_http_client()
-    resp = await client.delete(
+    resp = await _request_with_retry(
+        "delete",
         f"{DISCORD_API_BASE}/guilds/{DM_GUILD_ID}/members/{user_id}",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
     )
@@ -242,8 +273,8 @@ async def maybe_remove_from_dm_guild(user_id: str, *, attempt: int = 0) -> None:
 
 
 async def remove_from_target_guild(user_id: str) -> Optional[int]:
-    client = get_http_client()
-    resp = await client.delete(
+    resp = await _request_with_retry(
+        "delete",
         f"{DISCORD_API_BASE}/guilds/{TARGET_GUILD_ID}/members/{user_id}",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
     )
@@ -257,8 +288,8 @@ async def add_user_to_guild(user_id: str, guild_id: str) -> Optional[int]:
     if not token:
         logging.warning("No OAuth token cached for user %s; cannot re-add to guild %s", user_id, guild_id)
         return None
-    client = get_http_client()
-    resp = await client.put(
+    resp = await _request_with_retry(
+        "put",
         f"{DISCORD_API_BASE}/guilds/{guild_id}/members/{user_id}",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
         json={"access_token": token},
@@ -270,22 +301,13 @@ async def add_user_to_guild(user_id: str, guild_id: str) -> Optional[int]:
 
 async def send_log_message(content: str) -> None:
     try:
-        client = get_http_client()
-        resp = await client.post(
+        resp = await _request_with_retry(
+            "post",
             f"{DISCORD_API_BASE}/channels/{AUTH_LOG_CHANNEL_ID}/messages",
             headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
             json={"content": content},
             timeout=10,
         )
-        if resp.status_code == 429:
-            retry = float(resp.headers.get("Retry-After", "1"))
-            await asyncio.sleep(min(retry, 5.0))
-            await client.post(
-                f"{DISCORD_API_BASE}/channels/{AUTH_LOG_CHANNEL_ID}/messages",
-                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
-                json={"content": content},
-            )
-            return
         resp.raise_for_status()
     except Exception as exc:
         logging.warning("Log post failed: %s", exc)
@@ -328,8 +350,8 @@ async def post_appeal_embed(
             ],
         }
     ]
-    client = get_http_client()
-    resp = await client.post(
+    resp = await _request_with_retry(
+        "post",
         f"{DISCORD_API_BASE}/channels/{APPEAL_CHANNEL_ID}/messages",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
         json={"embeds": [embed], "components": components},
@@ -371,9 +393,9 @@ async def post_roblox_initial_appeal_embed(
             {"type": 2, "style": 4, "label": "Decline", "custom_id": f"roblox_initial_decline:{appeal_id}"},
         ]
     }]
-    client = get_http_client()
     try:
-        resp = await client.post(
+        resp = await _request_with_retry(
+            "post",
             f"{DISCORD_API_BASE}/channels/{ROBLOX_APPEAL_CHANNEL_ID}/messages",
             headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
             json={"embeds": [embed], "components": components},
@@ -418,9 +440,9 @@ async def post_roblox_final_appeal_embed(
             {"type": 2, "style": 4, "label": "Decline Unban", "custom_id": f"roblox_final_decline:{appeal_id}"},
         ]
     }]
-    client = get_http_client()
     try:
-        resp = await client.post(
+        resp = await _request_with_retry(
+            "post",
             f"{DISCORD_API_BASE}/channels/{ROBLOX_UNBAN_REQUEST_CHANNEL_ID}/messages",
             headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
             json={"embeds": [embed], "components": components},
@@ -434,8 +456,8 @@ async def post_roblox_final_appeal_embed(
 
 async def dm_user(user_id: str, embed: dict) -> bool:
     await ensure_dm_guild_membership(user_id)
-    client = get_http_client()
-    dm = await client.post(
+    dm = await _request_with_retry(
+        "post",
         f"{DISCORD_API_BASE}/users/@me/channels",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
         json={"recipient_id": user_id},
@@ -445,7 +467,8 @@ async def dm_user(user_id: str, embed: dict) -> bool:
     channel_id = dm.json().get("id")
     if not channel_id:
         return False
-    resp = await client.post(
+    resp = await _request_with_retry(
+        "post",
         f"{DISCORD_API_BASE}/channels/{channel_id}/messages",
         headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
         json={"embeds": [embed]},
@@ -460,9 +483,9 @@ async def unban_user_from_guild(user_id: str, guild_id: str) -> bool:
     """
     Unbans a user from a specific Discord guild.
     """
-    client = get_http_client()
     try:
-        resp = await client.delete(
+        resp = await _request_with_retry(
+            "delete",
             f"{DISCORD_API_BASE}/guilds/{guild_id}/bans/{user_id}",
             headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
         )
@@ -485,12 +508,12 @@ async def edit_discord_message(
     """
     Edits an existing Discord message.
     """
-    client = get_http_client()
     payload = {"embeds": embeds}
     if components is not None:
         payload["components"] = components
     try:
-        resp = await client.patch(
+        resp = await _request_with_retry(
+            "patch",
             f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}",
             headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
             json=payload,
@@ -504,9 +527,9 @@ async def edit_discord_message(
 
 async def delete_message(channel_id: str, message_id: str) -> bool:
     """Deletes a message from a Discord channel."""
-    client = get_http_client()
     try:
-        resp = await client.delete(
+        resp = await _request_with_retry(
+            "delete",
             f"{DISCORD_API_BASE}/channels/{channel_id}/messages/{message_id}",
             headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"},
         )

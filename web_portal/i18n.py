@@ -31,6 +31,46 @@ LANG_STRINGS: Dict[str, Dict[str, str]] = {
         "link_roblox_prompt": "Connect your Roblox account to sync appeal history.",
         "link_roblox_cta": "Connect Roblox",
     },
+    "ar": {
+        "hero_title": "حل حظر BlockSpin الخاص بك.",
+        "hero_sub": "سجّل الدخول عبر ديسكورد للتأكد من هويتك، راجع سياق الحظر، وقدّم استئنافاً محترماً.",
+        "login": "المتابعة باستخدام ديسكورد",
+        "login_roblox": "المتابعة باستخدام روبلوكس",
+        "how_it_works": "كيف يعمل",
+        "status_cta": "تتبع الاستئناف",
+        "history_title": "سجل الاستئناف",
+        "review_ban": "مراجعة الحظر",
+        "error_retry": "إعادة المحاولة",
+        "error_home": "العودة للرئيسية",
+        "ban_details": "تفاصيل الحظر",
+        "messages_header": "السياق الأخير",
+        "no_messages": "لا توجد رسائل حديثة.",
+        "language_switch": "تغيير اللغة",
+        "link_discord_prompt": "اربط حساب ديسكورد لتلقي التحديثات حول هذا الاستئناف.",
+        "link_discord_cta": "ربط ديسكورد",
+        "link_roblox_prompt": "اربط حساب روبلوكس لمزامنة سجل الاستئناف.",
+        "link_roblox_cta": "ربط روبلوكس",
+    },
+    "th": {
+        "hero_title": "แก้ไขการแบน BlockSpin ของคุณ",
+        "hero_sub": "เข้าสู่ระบบด้วย Discord เพื่อยืนยันตัวตน ตรวจสอบสาเหตุการแบน และส่งคำอุทธรณ์อย่างสุภาพ",
+        "login": "เข้าสู่ระบบด้วย Discord",
+        "login_roblox": "เข้าสู่ระบบด้วย Roblox",
+        "how_it_works": "วิธีการทำงาน",
+        "status_cta": "ติดตามคำอุทธรณ์",
+        "history_title": "ประวัติคำอุทธรณ์",
+        "review_ban": "ตรวจสอบการแบน",
+        "error_retry": "ลองอีกครั้ง",
+        "error_home": "กลับหน้าหลัก",
+        "ban_details": "รายละเอียดการแบน",
+        "messages_header": "บริบทล่าสุด",
+        "no_messages": "ไม่มีข้อความล่าสุด",
+        "language_switch": "เปลี่ยนภาษา",
+        "link_discord_prompt": "เชื่อมต่อ Discord เพื่อรับการอัปเดตเกี่ยวกับคำอุทธรณ์นี้",
+        "link_discord_cta": "เชื่อมต่อ Discord",
+        "link_roblox_prompt": "เชื่อมต่อ Roblox เพื่อซิงก์ประวัติคำอุทธรณ์ของคุณ",
+        "link_roblox_cta": "เชื่อมต่อ Roblox",
+    },
     "es": {
         "hero_title": "Resuelve tu baneo en BlockSpin.",
         "hero_sub": "Conecta con Discord, revisa el contexto y envía una apelación clara.",
@@ -145,12 +185,59 @@ async def detect_language(request: Request, lang_param: Optional[str] = None) ->
             resp = await client.get(f"https://ipapi.co/{ip}/json/", timeout=3)
             if resp.status_code == 200:
                 data = resp.json() or {}
+                cc_lang_map = {
+                    # Arabic-speaking countries
+                    "sa": "ar",
+                    "ae": "ar",
+                    "eg": "ar",
+                    "om": "ar",
+                    "qa": "ar",
+                    "bh": "ar",
+                    "kw": "ar",
+                    "ma": "ar",
+                    "dz": "ar",
+                    "tn": "ar",
+                    "jo": "ar",
+                    "iq": "ar",
+                    "ye": "ar",
+                    "ly": "ar",
+                    "ps": "ar",
+                    "lb": "ar",
+                    "sy": "ar",
+                    "sd": "ar",
+                    # Spanish-speaking
+                    "es": "es",
+                    "mx": "es",
+                    "ar": "es",
+                    "cl": "es",
+                    "co": "es",
+                    "pe": "es",
+                    "pr": "es",
+                    "uy": "es",
+                    "py": "es",
+                    "bo": "es",
+                    "do": "es",
+                    "gt": "es",
+                    "sv": "es",
+                    "hn": "es",
+                    "ni": "es",
+                    "cr": "es",
+                    "pa": "es",
+                    "ve": "es",
+                    "ec": "es",
+                    # Thai
+                    "th": "th",
+                }
                 langs = data.get("languages")
                 if langs:
-                    return normalize_language(langs.split(",")[0])
+                    lang_candidate = normalize_language(langs.split(",")[0])
+                    mapped = cc_lang_map.get(lang_candidate)
+                    return mapped or lang_candidate
                 cc = data.get("country_code")
                 if cc:
-                    return normalize_language(cc.lower())
+                    cc_norm = cc.lower()
+                    mapped = cc_lang_map.get(cc_norm)
+                    return mapped or normalize_language(cc_norm)
         except Exception as exc:
             logging.warning("Geo lookup failed for ip=%s error=%s", ip, exc)
     return "en"

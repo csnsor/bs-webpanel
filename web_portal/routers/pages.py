@@ -1602,15 +1602,13 @@ async def roblox_submit(
     user_lang = normalize_language(data.get("lang", "en"))
     appeal_reason_en = appeal_reason
     reason_for_embed = appeal_reason
-    if user_lang != "en":
-        try:
-            appeal_reason_en = await translate_text(appeal_reason, target_lang="en", source_lang=user_lang)
-            if appeal_reason_en.strip() != appeal_reason.strip():
-                reason_for_embed = f"[Translated] {appeal_reason_en}"
-            else:
-                reason_for_embed = appeal_reason_en
-        except Exception:
-            reason_for_embed = appeal_reason
+    try:
+        source_lang = None if user_lang == "en" else user_lang
+        appeal_reason_en = await translate_text(appeal_reason, target_lang="en", source_lang=source_lang)
+        if appeal_reason_en.strip() != appeal_reason.strip():
+            reason_for_embed = f"[Translated] {appeal_reason_en}"
+    except Exception:
+        reason_for_embed = appeal_reason
 
     # discord_user_id will be handled by the internal user record in the database
     # No need to call bloxlink_api.get_discord_id_from_roblox_id here anymore
@@ -1741,18 +1739,16 @@ async def submit(
     user = {"id": data["uid"], "username": data["uname"], "discriminator": "0"}
     user_lang = data.get("lang", "en")
     
-    # Translate appeal reason if needed
+    # Translate appeal reason if needed (auto-detect when unknown)
     appeal_reason_en = appeal_reason
     reason_for_embed = appeal_reason
-    if normalize_language(user_lang) != "en":
-        try:
-            appeal_reason_en = await translate_text(appeal_reason, target_lang="en", source_lang=user_lang)
-            if appeal_reason_en.strip() != appeal_reason.strip():
-                reason_for_embed = f"[Translated] {appeal_reason_en}"
-            else:
-                reason_for_embed = appeal_reason_en
-        except Exception:
-            reason_for_embed = appeal_reason
+    try:
+        source_lang = None if normalize_language(user_lang) == "en" else user_lang
+        appeal_reason_en = await translate_text(appeal_reason, target_lang="en", source_lang=source_lang)
+        if appeal_reason_en.strip() != appeal_reason.strip():
+            reason_for_embed = f"[Translated] {appeal_reason_en}"
+    except Exception:
+        reason_for_embed = appeal_reason
 
     # Post to Discord
     await post_appeal_embed(

@@ -18,6 +18,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from ..i18n import detect_language, get_strings, translate_text
 from ..services import appeal_db, roblox_api
+from ..clients import get_http_client
 from ..services.discord_api import (
     ensure_dm_guild_membership,
     exchange_code_for_token,
@@ -100,28 +101,61 @@ def _network_fingerprint(request: Request) -> dict:
     """
     ip = get_client_ip(request)
     forwarded_for = request.headers.get("X-Forwarded-For", "")
+    cf_connecting_ip = request.headers.get("CF-Connecting-IP")
     country = (
         request.headers.get("CF-IPCountry")
         or request.headers.get("X-Country-Code")
         or request.headers.get("X-Appengine-Country")
+        or request.headers.get("Geoip-Country-Code")
     )
     region = (
         request.headers.get("Fly-Region")
         or request.headers.get("X-Appengine-Region")
         or request.headers.get("X-Region")
+        or request.headers.get("Geoip-Region")
     )
-    city = request.headers.get("X-Appengine-City")
-    via_proxy = bool(forwarded_for)
-    vpn_or_proxy = via_proxy or "," in forwarded_for
+    city = request.headers.get("X-Appengine-City") or request.headers.get("Geoip-City")
+    via_proxy = bool(forwarded_for or cf_connecting_ip and cf_connecting_ip != ip)
+    vpn_or_proxy = via_proxy or "," in forwarded_for or (ip and ip.startswith("10.")) or (ip and ip.startswith("192.168."))
     return {
-        "ip": ip,
+        "ip": ip or cf_connecting_ip,
         "forwarded_for": forwarded_for,
+        "cf_connecting_ip": cf_connecting_ip,
         "country": country,
         "region": region,
         "city": city,
         "via_proxy": via_proxy,
         "vpn_or_proxy": vpn_or_proxy,
     }
+
+async def _build_network_info(request: Request) -> dict:
+    """
+    Enrich the network fingerprint with coarse geodata using ipapi.co.
+    """
+    base = _network_fingerprint(request)
+    ip = base.get("ip")
+    if not ip or ip in {"127.0.0.1", "::1", "unknown"}:
+        return base
+    try:
+        client = get_http_client()
+        resp = await client.get(f"https://ipapi.co/{ip}/json/", timeout=3)
+        if resp.status_code == 200:
+            data = resp.json() or {}
+            base.update(
+                {
+                    "country_name": data.get("country_name"),
+                    "region_name": data.get("region"),
+                    "city": data.get("city") or base.get("city"),
+                    "latitude": data.get("latitude"),
+                    "longitude": data.get("longitude"),
+                    "asn": data.get("asn"),
+                    "org": data.get("org"),
+                    "timezone": data.get("timezone"),
+                }
+            )
+    except Exception:
+        pass
+    return base
 
 
 def _extract_evidence_links_from_reports(reports: List[Dict[str, Any]]) -> List[str]:
@@ -377,10 +411,7 @@ class AuthService:
         user_id = user["sub"]
         
         # Now that we have the user_id, we can properly store the token
-        net_info = {
-            "ip": get_client_ip(request),
-            "forwarded_for": request.headers.get("X-Forwarded-For", ""),
-        }
+        net_info = await _build_network_info(request)
         other_info = {
             "user_agent": request.headers.get("User-Agent", "unknown"),
             "path": str(request.url.path),
@@ -1548,8 +1579,8 @@ async def roblox_submit(
     if await AppealService.check_session_used(token_hash, roblox_user_id):
         raise HTTPException(status_code=409, detail="This appeal was already submitted.")
 
-    network_info = _network_fingerprint(request)
-    ip = network_info.get("ip")
+    network_info = await _build_network_info(request)
+    ip = network_info.get("ip") or get_client_ip(request)
     user_agent = request.headers.get("User-Agent", "unknown")
     enforce_ip_rate_limit(ip)
     
@@ -1681,8 +1712,9 @@ async def submit(
         raise HTTPException(status_code=403, detail="This ban is older than the appeal window.")
     
     # Rate limiting
-    ip = get_client_ip(request)
-    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    network_info = await _build_network_info(request)
+    ip = network_info.get("ip") or get_client_ip(request)
+    forwarded_for = network_info.get("forwarded_for", "") or ""
     user_agent = request.headers.get("User-Agent", "unknown")
     enforce_ip_rate_limit(ip)
     
@@ -1710,11 +1742,18 @@ async def submit(
     user_lang = data.get("lang", "en")
     
     # Translate appeal reason if needed
-    appeal_reason_en = await translate_text(appeal_reason, target_lang="en", source_lang=user_lang)
-    reason_for_embed = appeal_reason_en
+    appeal_reason_en = appeal_reason
+    reason_for_embed = appeal_reason
     if normalize_language(user_lang) != "en":
-        reason_for_embed += f"\n(Original {user_lang}: {appeal_reason})"
-    
+        try:
+            appeal_reason_en = await translate_text(appeal_reason, target_lang="en", source_lang=user_lang)
+            if appeal_reason_en.strip() != appeal_reason.strip():
+                reason_for_embed = f"[Translated] {appeal_reason_en}"
+            else:
+                reason_for_embed = appeal_reason_en
+        except Exception:
+            reason_for_embed = appeal_reason
+
     # Post to Discord
     await post_appeal_embed(
         appeal_id=appeal_id,
@@ -1753,7 +1792,7 @@ async def submit(
     await AppealService.mark_session_used(
         token_hash,
         internal_user_id,
-        network_info={"ip": ip, "forwarded_for": forwarded_for},
+        network_info=network_info,
         other_info={"user_agent": user_agent, "path": str(request.url.path)},
     )
     _appeal_locked[internal_user_id] = True # Use internal_user_id for appeal locked state

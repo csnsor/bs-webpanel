@@ -397,7 +397,10 @@ def _parse_int(value: Any) -> int:
     try:
         return int(value)
     except Exception:
-        return 0
+        try:
+            return int(float(value))
+        except Exception:
+            return 0
 
 
 async def update_staff_stats(
@@ -452,12 +455,13 @@ async def update_staff_stats(
     else:
         avg_new = avg_prev
 
+    # Appeals counters are stored as text columns in the database; cast to string before upsert to avoid type issues.
     payload = {
         "user_id": moderator_id,
         "username": moderator_name,
-        "total_appeals_handled": total_new,
-        "appeals_accepted": acc_new,
-        "appeals_declined": dec_new,
+        "total_appeals_handled": str(total_new),
+        "appeals_accepted": str(acc_new),
+        "appeals_declined": str(dec_new),
         "last_activity_at": datetime.now(timezone.utc).isoformat(),
     }
     if avg_new is not None:

@@ -10,7 +10,7 @@ from fastapi import Request
 from fastapi.responses import HTMLResponse
 
 from .clients import JINJA_ENV
-from .i18n import LANG_STRINGS
+from .i18n import LANG_STRINGS, LANG_META
 from .settings import INVITE_LINK
 from .utils import clean_display_name, normalize_language
 from . import state
@@ -53,12 +53,23 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     lang = normalize_language(lang)
     year = time.gmtime().tm_year
     strings = strings or LANG_STRINGS["en"]
-    toggle_lang = "es" if lang != "es" else "en"
-    toggle_label = strings.get("language_switch", "Switch language")
     top_actions = strings.get("top_actions") or strings.get("user_chip", "")
     script_block = strings.get("script_block")
     script_nonce = strings.get("script_nonce") or secrets.token_urlsafe(12)
     full_script = script_block or ""
+    lang_switch_label = html.escape(strings.get("language_switch", "Switch language"))
+    current_flag = html.escape((LANG_META.get(lang) or {}).get("flag", "🌐"))
+    lang_options: List[str] = []
+    for code, meta in LANG_META.items():
+        label = html.escape(meta.get("name") or code.upper())
+        flag = html.escape(meta.get("flag") or "")
+        active_cls = "lang-option--active" if code == lang else ""
+        lang_options.append(
+            f'<button class="lang-option {active_cls}" data-lang="{code}" aria-label="{label}"><span class="lang-flag">{flag}</span><span class="lang-name">{label}</span></button>'
+        )
+    lang_popover = (
+        f'<div class="lang-popover" id="langPopover" role="menu">{"".join(lang_options)}</div>'
+    )
     nav_how_it_works = html.escape(strings.get("nav_how_it_works", strings.get("how_it_works", "How it works")))
     nav_terms = html.escape(strings.get("nav_terms", "Terms"))
     nav_privacy = html.escape(strings.get("nav_privacy", "Privacy"))
@@ -118,6 +129,34 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         setInterval(tick, 10000);
       })();
     """
+    lang_script = """
+        (function(){
+          const toggle = document.getElementById('langToggle');
+          const footerToggle = document.getElementById('footerLangToggle');
+          const pop = document.getElementById('langPopover');
+          if(!toggle || !pop) return;
+          const open = () => { pop.classList.add('open'); toggle.setAttribute('aria-expanded','true'); };
+          const close = () => { pop.classList.remove('open'); toggle.setAttribute('aria-expanded','false'); };
+          const togglePop = (e) => { e.preventDefault(); pop.classList.contains('open') ? close() : open(); };
+          toggle.addEventListener('click', togglePop);
+          if (footerToggle) footerToggle.addEventListener('click', togglePop);
+          document.addEventListener('click', (e) => {
+            if (pop.contains(e.target) || toggle.contains(e.target) || (footerToggle && footerToggle.contains(e.target))) return;
+            close();
+          });
+          pop.querySelectorAll('.lang-option').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const code = btn.dataset.lang;
+              if (!code) return;
+              const url = new URL(window.location.href);
+              url.searchParams.set('lang', code);
+              document.cookie = `lang=${code}; path=/; max-age=${60*60*24*30}; samesite=Lax`;
+              window.location.href = url.toString();
+            });
+          });
+        })();
+    """
+
     return f"""
     <!DOCTYPE html>
     <html lang="{lang}">
@@ -138,6 +177,21 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         <link rel="icon" type="image/svg+xml" href="{favicon}">
         <meta http-equiv="Content-Security-Policy" content="{csp}">
         <link rel="stylesheet" href="/static/styles.css">
+        <style>
+          .lang-switch {{ position: relative; }}
+          .lang-toggle {{ display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--card-bg-2);color:inherit;padding:8px 10px;border-radius:10px;cursor:pointer; }}
+          .lang-toggle .lang-flag {{ font-size:16px; }}
+          .lang-popover {{ position:absolute;top:110%;right:0;background:var(--card-bg-2);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,0.25);padding:8px;display:none;z-index:30;min-width:180px; }}
+          .lang-popover.open {{ display:block; }}
+          .lang-option {{ width:100%;display:flex;align-items:center;gap:8px;padding:8px 10px;border:none;background:transparent;color:inherit;border-radius:8px;cursor:pointer;text-align:left; }}
+          .lang-option:hover {{ background:var(--card-bg-3); }}
+          .lang-option--active {{ outline:1px solid var(--border-strong, #5c5cff); background:var(--card-bg-3); }}
+          .lang-flag {{ width:20px; text-align:center; }}
+          .lang-name {{ flex:1; font-weight:600; }}
+          @media (max-width: 768px) {{
+            .lang-popover {{ left:0; right:auto; }}
+          }}
+        </style>
       </head>
       <body>
         <div class="bg-orbit" aria-hidden="true"></div>
@@ -164,6 +218,14 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
               <a class="nav__link nav__link--muted" href="{INVITE_LINK}" rel="noreferrer">{nav_discord}</a>
             </nav>
 
+            <div class="lang-switch">
+              <button class="lang-toggle" id="langToggle" aria-haspopup="true" aria-expanded="false">
+                <span class="lang-flag">{current_flag}</span>
+                <span class="lang-label">{lang_switch_label}</span>
+              </button>
+              {lang_popover}
+            </div>
+
             {top_actions}
           </div>
         </header>
@@ -181,12 +243,12 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
               <a href="/tos">{nav_terms}</a>
               <a href="/privacy">{nav_privacy}</a>
               <a href="/status">{nav_status}</a>
-              <a href="?lang={toggle_lang}" style="color:inherit;">{toggle_label}</a>
+              <button class="lang-toggle" id="footerLangToggle" style="margin-left:8px;background:none;border:1px solid var(--border);">{lang_switch_label}</button>
             </div>
           </footer>
         </main>
 
-        <script nonce="{script_nonce}">{announce_block}{full_script}{live_script}</script>
+        <script nonce="{script_nonce}">{announce_block}{full_script}{lang_script}{live_script}</script>
       </body>
     </html>
     """

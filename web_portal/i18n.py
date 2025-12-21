@@ -117,16 +117,32 @@ LANG_STRINGS: Dict[str, Dict[str, str]] = {
 }
 
 LANG_CACHE: Dict[str, Dict[str, str]] = {}
+# Per-text translation cache to avoid repeated network calls for the same phrase.
+TRANSLATION_CACHE: Dict[tuple[str, str, Optional[str]], str] = {}
+
+# Language display metadata for UI selectors.
+LANG_META: Dict[str, Dict[str, str]] = {
+    "en": {"name": "English", "flag": "🇺🇸"},
+    "es": {"name": "Español", "flag": "🇪🇸"},
+    "ar": {"name": "العربية", "flag": "🇸🇦"},
+    "th": {"name": "ไทย", "flag": "🇹🇭"},
+}
 
 
 async def translate_text(text: str, target_lang: str = "en", source_lang: Optional[str] = None) -> str:
-    if not text or (normalize_language(target_lang) == "en" and normalize_language(source_lang) == "en"):
+    target_lang = normalize_language(target_lang)
+    source_lang = normalize_language(source_lang) if source_lang else None
+    if not text or (target_lang == "en" and source_lang == "en"):
         return text
+    cache_key = (text, target_lang, source_lang or "auto")
+    cached = TRANSLATION_CACHE.get(cache_key)
+    if cached:
+        return cached
     # Try primary provider
     providers = [
-        ("primary", LIBRETRANSLATE_URL),
         ("gtx", "https://translate.googleapis.com/translate_a/single"),
         ("mymemory", "https://api.mymemory.translated.net/get"),
+        ("primary", LIBRETRANSLATE_URL),
     ]
     for name, url in providers:
         try:
@@ -144,7 +160,9 @@ async def translate_text(text: str, target_lang: str = "en", source_lang: Option
                     data = resp.json()
                     # Google translate API style response: [[["translated","original",...]],...]
                     if data and isinstance(data, list) and data[0] and data[0][0]:
-                        return data[0][0][0] or text
+                        translated = data[0][0][0] or text
+                        TRANSLATION_CACHE[cache_key] = translated
+                        return translated
             elif name == "mymemory":
                 params = {
                     "q": text,
@@ -155,6 +173,7 @@ async def translate_text(text: str, target_lang: str = "en", source_lang: Option
                     data = resp.json() or {}
                     translated = (data.get("responseData") or {}).get("translatedText")
                     if translated:
+                        TRANSLATION_CACHE[cache_key] = translated
                         return translated
             else:
                 resp = await client.post(
@@ -170,7 +189,9 @@ async def translate_text(text: str, target_lang: str = "en", source_lang: Option
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    return data.get("translatedText") or text
+                    translated = data.get("translatedText") or text
+                    TRANSLATION_CACHE[cache_key] = translated
+                    return translated
             logging.warning("Translation failed provider=%s status=%s body=%s", name, resp.status_code, resp.text)
         except Exception as exc:
             logging.warning("Translation exception provider=%s error=%s", name, exc)

@@ -535,26 +535,26 @@ class PageRenderer:
         session: Optional[Dict[str, Any]] = None
     ) -> str:
         """Build the content for the home page."""
+        hero_title = html.escape(strings.get("home_hero_title", strings.get("hero_title", "Resolve your ban the right way.")))
+        section_title = html.escape(strings.get("home_section_title", "BlockSpin Appeals"))
+        section_body = html.escape(strings.get("home_section_body", "Welcome to the official BlockSpin ban appeal portal. This site is used to submit and review appeals related to BlockSpin moderation actions. Appeals are handled under a single linked account to ensure accurate review and consistent history. Please read how the process works before submitting an appeal."))
+        status_cta = html.escape(strings.get("home_status_cta", strings.get("status_cta", "View Appeal Status")))
+        learn_cta = html.escape(strings.get("home_learn_more_cta", "Learn more"))
         return f"""
         <section class="hero hero--home">
-        <h1 class="hero__title">
-            Resolve your ban the <span class="shine">right way</span>.
-        </h1>
+        <h1 class="hero__title">{hero_title}</h1>
 
 
         </section>
 
         <section class="card card--wide">
-        <h2 class="card__title">BlockSpin Appeals</h2>
+        <h2 class="card__title">{section_title}</h2>
 
-        <p class="muted">
-            Welcome to the official BlockSpin ban appeal portal. This site is used to submit and review appeals related to BlockSpin moderation actions. Appeals are handled under a single linked account to ensure accurate review and
-  consistent history. Please read how the process works before submitting an appeal.
-        </p>
+        <p class="muted">{section_body}</p>
 
         <div class="btn-row" style="margin-top:16px;">
-            <a class="btn btn--ghost" href="/status">View Appeal Status</a>
-            <a class="btn btn--ghost" href="/how-it-works">Learn more</a>
+            <a class="btn btn--ghost" href="/status">{status_cta}</a>
+            <a class="btn btn--ghost" href="/how-it-works">{learn_cta}</a>
         </div>
         </section>
 
@@ -650,12 +650,20 @@ class PageRenderer:
               </div>
             """
 
-        display_name = html.escape(clean_display_name(session.get("display_name") or session.get("uname", "you")))
+        raw_display_name = clean_display_name(session.get("display_name") or session.get("uname", "you"))
+        display_name = html.escape(raw_display_name)
+        history_title_template = strings.get("status_history_title_fmt", "Appeal history for {name}")
+        try:
+            history_title = html.escape(history_title_template.format(name=raw_display_name))
+        except Exception:
+            history_title = history_title_template
+        history_subtitle = html.escape(strings.get("status_history_subtitle", "All linked appeals are shown in one timeline."))
+        back_home = html.escape(strings.get("status_back_home", "Back home"))
         content = f"""
           <div class="card status-card">
             <div class="status-heading">
-              <h1>Appeal history for {display_name}</h1>
-              <p class="muted">All linked appeals are shown in one timeline.</p>
+              <h1>{history_title}</h1>
+              <p class="muted">{history_subtitle}</p>
             </div>
             {link_prompt_html}
             <div class="history-wrapper">
@@ -663,7 +671,7 @@ class PageRenderer:
             </div>
             <div class="btn-row" style="margin-top:10px;">
               <a class="btn secondary" href="/how-it-works">{html.escape(strings.get("how_it_works", "How it works"))}</a>
-              <a class="btn secondary" href="/">Back home</a>
+              <a class="btn secondary" href="/">{back_home}</a>
             </div>
           </div>
         """
@@ -704,35 +712,44 @@ class PageRenderer:
             discord_login_url=discord_login_url,
             roblox_login_url=roblox_login_url,
         )
+        hiw_intro = html.escape(strings.get("hiw_intro_blurb", "Link either account, follow the clear appeal flow, and keep all moderators informed."))
+        step1_title = html.escape(strings.get("hiw_step1_title", "Authenticate"))
+        step1_body = html.escape(strings.get("hiw_step1_body", "Start by signing in with Discord or Roblox. Each login seeds the internal user record."))
+        step2_title = html.escape(strings.get("hiw_step2_title", "Link both accounts"))
+        step2_body = html.escape(strings.get("hiw_step2_body", "Connect your other platform from the header actions or live prompts so appeals merge seamlessly."))
+        step3_title = html.escape(strings.get("hiw_step3_title", "Check status"))
+        step3_body = html.escape(strings.get("hiw_step3_body", "Use the Status page to review every appeal tied to your linked accounts, including moderator decisions and status updates."))
+        step4_title = html.escape(strings.get("hiw_step4_title", "Submit respectfully"))
+        step4_body = html.escape(strings.get("hiw_step4_body", "Once both accounts are linked, choose the correct form, explain the context, and commit to improved behaviour."))
 
         content = f"""
         <section class="hero hero--home">
           <div class="hero__card hero__card--compact" style="text-align:center;">
             <h1>{html.escape(strings.get("how_it_works", "How it works"))}</h1>
-            <p class="muted">Link either account, follow the clear appeal flow, and keep all moderators informed.</p>
+            <p class="muted">{hiw_intro}</p>
           </div>
         </section>
 
         <section class="grid grid-steps">
           <article class="card step-card">
             <div class="step-kicker">1</div>
-            <h2>Authenticate</h2>
-            <p class="muted">Start by signing in with Discord or Roblox. Each login seeds the internal user record.</p>
+            <h2>{step1_title}</h2>
+            <p class="muted">{step1_body}</p>
           </article>
           <article class="card step-card">
             <div class="step-kicker">2</div>
-            <h2>Link both accounts</h2>
-            <p class="muted">Connect your other platform from the header actions or live prompts so appeals merge seamlessly.</p>
+            <h2>{step2_title}</h2>
+            <p class="muted">{step2_body}</p>
           </article>
           <article class="card step-card">
             <div class="step-kicker">3</div>
-            <h2>Check status</h2>
-            <p class="muted">Use the Status page to review every appeal tied to your linked accounts, including moderator decisions and status updates.</p>
+            <h2>{step3_title}</h2>
+            <p class="muted">{step3_body}</p>
           </article>
           <article class="card step-card">
             <div class="step-kicker">4</div>
-            <h2>Submit respectfully</h2>
-            <p class="muted">Once both accounts are linked, choose the correct form, explain the context, and commit to improved behaviour.</p>
+            <h2>{step4_title}</h2>
+            <p class="muted">{step4_body}</p>
           </article>
         </section>
 
@@ -1021,174 +1038,223 @@ async def how_it_works(request: Request, lang: Optional[str] = None):
 
 
 @router.get("/tos", response_class=HTMLResponse)
-async def tos():
-    """Render the Terms of Service page."""
-    content = """
+async def tos(request: Request, lang: Optional[str] = None):
+    """Render the Terms of Service page with auto-translation support."""
+    current_lang = await detect_language(request, lang)
+    strings = await get_strings(current_lang)
+
+    async def tr(text: str) -> str:
+        if current_lang == "en":
+            return html.escape(text)
+        return html.escape(await translate_text(text, target_lang=current_lang, source_lang="en"))
+
+    title = await tr("Terms of Service - BlockSpin Appeals Portal")
+    intro = await tr(
+        "The BlockSpin Appeals Portal provides a formal process for requesting a review of moderation actions taken within the BlockSpin community. By accessing or using this portal, you agree to the terms outlined below."
+    )
+    responsibilities = [await tr(item) for item in [
+        "Provide accurate, complete, and truthful information in all appeal submissions",
+        "Include relevant context and supporting details related to the moderation action",
+        "Submit only one appeal per incident unless explicitly instructed otherwise",
+        "Ensure that submitted content does not violate applicable laws or platform rules",
+    ]]
+    prohibited = [await tr(item) for item in [
+        "Attempting to evade bans or sanctions through alternate accounts or methods",
+        "Submitting false, misleading, or fabricated information or evidence",
+        "Harassing, threatening, impersonating, or abusing moderation staff",
+        "Using automated tools, scripts, bots, or mass-submission techniques",
+        "Submitting spam, malicious content, or coordinated disruption attempts",
+        "Sharing personal data of other individuals without authorization",
+    ]]
+    review_items = [await tr(item) for item in [
+        "All appeals are reviewed by authorized BlockSpin moderators",
+        "Appeal outcomes are determined at the moderators' discretion based on available information",
+        "Decisions may be final and are not guaranteed to result in reversal or modification",
+        "Abuse of the appeals process may result in denial of the appeal, additional enforcement actions, or permanent loss of appeal privileges",
+    ]]
+    data_intro = await tr(
+        "To maintain the integrity, security, and fairness of the appeals process, BlockSpin may collect and process:"
+    )
+    data_items = [await tr(item) for item in [
+        "Appeal submissions and related content",
+        "Associated platform account identifiers (such as Roblox and Discord IDs)",
+        "IP address, network metadata, and basic device or browser information",
+    ]]
+    data_outro = await tr(
+        "This data is used solely for moderation review, fraud and abuse prevention, internal auditing, and system security, in accordance with the Privacy Notice."
+    )
+    privacy_requests = await tr(
+        "Personal data is handled in accordance with the BlockSpin Privacy Notice. Requests related to data access, correction, or removal may be submitted by emailing hello@csnsor.nl."
+    )
+    changes = await tr(
+        "BlockSpin may update these Terms of Service at any time to reflect operational, legal, or policy changes. Continued use of the portal constitutes acceptance of the updated terms."
+    )
+    agreement = await tr(
+        "By using this portal, you confirm that you have read, understood, and agreed to these Terms of Service."
+    )
+    back_home = html.escape(strings.get("status_back_home", "Back home"))
+
+    def render_list(items: list[str]) -> str:
+        return "".join(f"<li>{item}</li>" for item in items)
+
+    content = f"""
         <div class="card">
-        <h2>Terms of Service – BlockSpin Appeals Portal</h2>
+        <h2>{title}</h2>
 
-        <p class="muted">
-            The BlockSpin Appeals Portal provides a formal process for requesting a review of
-            moderation actions taken within the BlockSpin community. By accessing or using
-            this portal, you agree to the terms outlined below.
-        </p>
+        <p class="muted">{intro}</p>
 
-        <h3>User Responsibilities</h3>
+        <h3>{await tr("User Responsibilities")}</h3>
         <ul class="muted" style="margin-left:18px;">
-            <li>Provide accurate, complete, and truthful information in all appeal submissions</li>
-            <li>Include relevant context and supporting details related to the moderation action</li>
-            <li>Submit only one appeal per incident unless explicitly instructed otherwise</li>
-            <li>Ensure that submitted content does not violate applicable laws or platform rules</li>
+            {render_list(responsibilities)}
         </ul>
 
-        <h3>Prohibited Conduct</h3>
+        <h3>{await tr("Prohibited Conduct")}</h3>
         <ul class="muted" style="margin-left:18px;">
-            <li>Attempting to evade bans or sanctions through alternate accounts or methods</li>
-            <li>Submitting false, misleading, or fabricated information or evidence</li>
-            <li>Harassing, threatening, impersonating, or abusing moderation staff</li>
-            <li>Using automated tools, scripts, bots, or mass-submission techniques</li>
-            <li>Submitting spam, malicious content, or coordinated disruption attempts</li>
-            <li>Sharing personal data of other individuals without authorization</li>
+            {render_list(prohibited)}
         </ul>
 
-        <h3>Review Process and Enforcement</h3>
+        <h3>{await tr("Review Process and Enforcement")}</h3>
         <ul class="muted" style="margin-left:18px;">
-            <li>All appeals are reviewed by authorized BlockSpin moderators</li>
-            <li>Appeal outcomes are determined at the moderators’ discretion based on available information</li>
-            <li>Decisions may be final and are not guaranteed to result in reversal or modification</li>
-            <li>Abuse of the appeals process may result in denial of the appeal, additional enforcement actions, or permanent loss of appeal privileges</li>
+            {render_list(review_items)}
         </ul>
 
-        <h3>Data Collection and Logging</h3>
-        <p class="muted">
-            To maintain the integrity, security, and fairness of the appeals process,
-            BlockSpin may collect and process:
-        </p>
+        <h3>{await tr("Data Collection and Logging")}</h3>
+        <p class="muted">{data_intro}</p>
         <ul class="muted" style="margin-left:18px;">
-            <li>Appeal submissions and related content</li>
-            <li>Associated platform account identifiers (such as Roblox and Discord IDs)</li>
-            <li>IP address, network metadata, and basic device or browser information</li>
+            {render_list(data_items)}
         </ul>
-        <p class="muted">
-            This data is used solely for moderation review, fraud and abuse prevention,
-            internal auditing, and system security, in accordance with the Privacy Notice.
-        </p>
+        <p class="muted">{data_outro}</p>
 
-        <h3>Privacy and Data Requests</h3>
-        <p class="muted">
-            Personal data is handled in accordance with the BlockSpin Privacy Notice.
-            Requests related to data access, correction, or removal may be submitted by
-            emailing <strong>hello@csnsor.nl</strong>.
-        </p>
+        <h3>{await tr("Privacy and Data Requests")}</h3>
+        <p class="muted">{privacy_requests}</p>
 
-        <h3>Changes to These Terms</h3>
-        <p class="muted">
-            BlockSpin may update these Terms of Service at any time to reflect operational,
-            legal, or policy changes. Continued use of the portal constitutes acceptance
-            of the updated terms.
-        </p>
+        <h3>{await tr("Changes to These Terms")}</h3>
+        <p class="muted">{changes}</p>
 
-        <p class="muted">
-            By using this portal, you confirm that you have read, understood, and agreed
-            to these Terms of Service.
-        </p>
+        <p class="muted">{agreement}</p>
 
         <div class="btn-row" style="margin-top:10px;">
-            <a class="btn secondary" href="/">Back home</a>
+            <a class="btn secondary" href="/">{back_home}</a>
         </div>
         </div>
 
     """
-    return HTMLResponse(render_page("Terms of Service", content), headers={"Cache-Control": "no-store"})
+    response = HTMLResponse(render_page("Terms of Service", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
+    response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+    return response
 
 
 @router.get("/privacy", response_class=HTMLResponse)
-async def privacy():
+async def privacy(request: Request, lang: Optional[str] = None):
     """Render the Privacy Policy page."""
-    content = """
+    current_lang = await detect_language(request, lang)
+    strings = await get_strings(current_lang)
+
+    async def tr(text: str) -> str:
+        if current_lang == "en":
+            return html.escape(text)
+        return html.escape(await translate_text(text, target_lang=current_lang, source_lang="en"))
+
+    title = await tr("Privacy Notice - BlockSpin Appeals Portal")
+    intro = await tr(
+        "This Privacy Notice explains how BlockSpin collects, uses, and protects information submitted through the BlockSpin Appeals Portal."
+    )
+    who_we_are = await tr(
+        "The BlockSpin Appeals Portal is operated by the BlockSpin community moderation team. For privacy-related questions or requests, including data access or removal, please contact us at hello@csnsor.nl."
+    )
+    info_collect = [await tr(item) for item in [
+        "Appeal submissions and related content",
+        "Platform account identifiers (e.g., Roblox User ID, Discord User ID)",
+        "Current usernames associated with those accounts",
+        "IP address and approximate geographic region (country or region level)",
+        "Basic device and browser information (user agent)",
+        "Limited message or event context necessary to verify moderation actions",
+    ]]
+    use_intro = await tr(
+        "Collected information is used strictly for legitimate community and security purposes, including:"
+    )
+    use_items = [await tr(item) for item in [
+        "Authentication and identity verification via OAuth",
+        "Preventing fraud, abuse, and ban evasion",
+        "Reviewing and resolving moderation appeals",
+        "Maintaining internal accountability and audit logs",
+        "Protecting the integrity and safety of the BlockSpin community",
+    ]]
+    auth_providers = await tr(
+        "This portal uses third-party authentication services (OAuth 2.0), including Roblox and Discord. We receive basic account identifiers and public profile information necessary to verify identity. OAuth access tokens are not stored beyond what is required for authentication."
+    )
+    data_sharing = [await tr(item) for item in [
+        "Access to appeal data is restricted to authorized BlockSpin moderation staff",
+        "Information may be disclosed if required to comply with applicable laws or legal requests",
+        "BlockSpin does not sell, rent, or trade personal data",
+    ]]
+    data_retention = [await tr(item) for item in [
+        "Denied appeals are typically retained for up to 12 months for audit and abuse prevention",
+        "Approved appeals retain a minimal record of the decision for moderation history",
+        "Security-related logs may be retained for a limited period to prevent abuse",
+    ]]
+    your_rights = await tr(
+        "Depending on your jurisdiction, you may have the right to request access to, correction of, or deletion of your personal data, or to object to certain processing. Requests can be submitted by emailing hello@csnsor.nl and will be reviewed in accordance with applicable laws and operational requirements."
+    )
+    cookies = await tr(
+        "This site does not use advertising cookies or third-party tracking technologies. Essential session or security-related storage may be used to ensure proper operation."
+    )
+    acknowledgement = await tr("By using this portal, you acknowledge and accept this Privacy Notice.")
+    back_home = html.escape(strings.get("status_back_home", "Back home"))
+
+    def render_list(items: list[str]) -> str:
+        return "".join(f"<li>{item}</li>" for item in items)
+
+    content = f"""
         <div class="card">
-        <h2>Privacy Notice – BlockSpin Appeals Portal</h2>
+        <h2>{title}</h2>
 
-        <p class="muted">
-            This Privacy Notice explains how BlockSpin collects, uses, and protects information
-            submitted through the BlockSpin Appeals Portal.
-        </p>
+        <p class="muted">{intro}</p>
 
-        <h3>Who We Are</h3>
-        <p class="muted">
-            The BlockSpin Appeals Portal is operated by the BlockSpin community moderation team.
-            For privacy-related questions or requests, including data access or removal,
-            please contact us at <strong>hello@csnsor.nl</strong>.
-        </p>
+        <h3>{await tr("Who We Are")}</h3>
+        <p class="muted">{who_we_are}</p>
 
-        <h3>Information We Collect</h3>
+        <h3>{await tr("Information We Collect")}</h3>
         <ul class="muted" style="margin-left:18px;">
-            <li>Appeal submissions and related content</li>
-            <li>Platform account identifiers (e.g., Roblox User ID, Discord User ID)</li>
-            <li>Current usernames associated with those accounts</li>
-            <li>IP address and approximate geographic region (country or region level)</li>
-            <li>Basic device and browser information (user agent)</li>
-            <li>Limited message or event context necessary to verify moderation actions</li>
+            {render_list(info_collect)}
         </ul>
 
-        <h3>How We Use Your Information</h3>
-        <p class="muted">
-            Collected information is used strictly for legitimate community and security purposes, including:
-        </p>
+        <h3>{await tr("How We Use Your Information")}</h3>
+        <p class="muted">{use_intro}</p>
         <ul class="muted" style="margin-left:18px;">
-            <li>Authentication and identity verification via OAuth</li>
-            <li>Preventing fraud, abuse, and ban evasion</li>
-            <li>Reviewing and resolving moderation appeals</li>
-            <li>Maintaining internal accountability and audit logs</li>
-            <li>Protecting the integrity and safety of the BlockSpin community</li>
+            {render_list(use_items)}
         </ul>
 
-        <h3>Authentication Providers</h3>
-        <p class="muted">
-            This portal uses third-party authentication services (OAuth 2.0), including Roblox and Discord.
-            We receive basic account identifiers and public profile information necessary to verify identity.
-            OAuth access tokens are not stored beyond what is required for authentication.
-        </p>
+        <h3>{await tr("Authentication Providers")}</h3>
+        <p class="muted">{auth_providers}</p>
 
-        <h3>Data Sharing</h3>
+        <h3>{await tr("Data Sharing")}</h3>
         <ul class="muted" style="margin-left:18px;">
-            <li>Access to appeal data is restricted to authorized BlockSpin moderation staff</li>
-            <li>Information may be disclosed if required to comply with applicable laws or legal requests</li>
-            <li>BlockSpin does not sell, rent, or trade personal data</li>
+            {render_list(data_sharing)}
         </ul>
 
-        <h3>Data Retention</h3>
+        <h3>{await tr("Data Retention")}</h3>
         <ul class="muted" style="margin-left:18px;">
-            <li>Denied appeals are typically retained for up to 12 months for audit and abuse prevention</li>
-            <li>Approved appeals retain a minimal record of the decision for moderation history</li>
-            <li>Security-related logs may be retained for a limited period to prevent abuse</li>
+            {render_list(data_retention)}
         </ul>
 
-        <h3>Your Rights</h3>
-        <p class="muted">
-            Depending on your jurisdiction, you may have the right to request access to, correction of,
-            or deletion of your personal data, or to object to certain processing.
-            Requests can be submitted by emailing <strong>hello@csnsor.nl</strong> and will be reviewed
-            in accordance with applicable laws and operational requirements.
-        </p>
+        <h3>{await tr("Your Rights")}</h3>
+        <p class="muted">{your_rights}</p>
 
-        <h3>Cookies and Tracking</h3>
-        <p class="muted">
-            This site does not use advertising cookies or third-party tracking technologies.
-            Essential session or security-related storage may be used to ensure proper operation.
-        </p>
+        <h3>{await tr("Cookies and Tracking")}</h3>
+        <p class="muted">{cookies}</p>
 
-        <p class="muted">
-            By using this portal, you acknowledge and accept this Privacy Notice.
-        </p>
+        <p class="muted">{acknowledgement}</p>
 
         <div class="btn-row" style="margin-top:10px;">
-            <a class="btn secondary" href="/">Back home</a>
+            <a class="btn secondary" href="/">{back_home}</a>
         </div>
         </div>
 
     """
-    return HTMLResponse(render_page("Privacy", content), headers={"Cache-Control": "no-store"})
+    response = HTMLResponse(render_page("Privacy", content, lang=current_lang, strings=strings), headers={"Cache-Control": "no-store"})
+    response.set_cookie("lang", current_lang, max_age=60 * 60 * 24 * 30, httponly=False, samesite="Lax")
+    return response
 
 
 @router.get("/status", response_class=HTMLResponse)

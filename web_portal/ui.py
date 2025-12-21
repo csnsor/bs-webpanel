@@ -59,6 +59,12 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     script_block = strings.get("script_block")
     script_nonce = strings.get("script_nonce") or secrets.token_urlsafe(12)
     full_script = script_block or ""
+    nav_how_it_works = html.escape(strings.get("nav_how_it_works", strings.get("how_it_works", "How it works")))
+    nav_terms = html.escape(strings.get("nav_terms", "Terms"))
+    nav_privacy = html.escape(strings.get("nav_privacy", "Privacy"))
+    nav_status = html.escape(strings.get("nav_status", "Appeal Status"))
+    nav_discord = html.escape(strings.get("nav_discord", "Discord"))
+    brand_tag = html.escape(strings.get("brand_tag", "Ban Appeal Portal"))
     csp = (
         "default-src 'self'; "
         "img-src 'self' data: https://*.discordapp.com https://*.discord.com; "
@@ -146,16 +152,16 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
               </span>
               <span class="brand__text">
                 <span class="brand__name">BlockSpin</span>
-                <span class="brand__tag">Ban Appeal Portal</span>
+                <span class="brand__tag">{brand_tag}</span>
               </span>
             </a>
 
             <nav class="nav">
-              <a class="nav__link" href="/how-it-works">How it works</a>
-              <a class="nav__link" href="/tos">Terms</a>
-              <a class="nav__link" href="/privacy">Privacy</a>
-              <a class="nav__link" href="/status">Appeal Status</a>
-              <a class="nav__link nav__link--muted" href="{INVITE_LINK}" rel="noreferrer">Discord</a>
+              <a class="nav__link" href="/how-it-works">{nav_how_it_works}</a>
+              <a class="nav__link" href="/tos">{nav_terms}</a>
+              <a class="nav__link" href="/privacy">{nav_privacy}</a>
+              <a class="nav__link" href="/status">{nav_status}</a>
+              <a class="nav__link nav__link--muted" href="{INVITE_LINK}" rel="noreferrer">{nav_discord}</a>
             </nav>
 
             {top_actions}
@@ -172,9 +178,9 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
               <span class="footer__muted">© {year}</span>
             </div>
             <div class="footer__right">
-              <a href="/tos">Terms</a>
-              <a href="/privacy">Privacy</a>
-              <a href="/status">Status</a>
+              <a href="/tos">{nav_terms}</a>
+              <a href="/privacy">{nav_privacy}</a>
+              <a href="/status">{nav_status}</a>
               <a href="?lang={toggle_lang}" style="color:inherit;">{toggle_label}</a>
             </div>
           </footer>

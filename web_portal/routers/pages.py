@@ -1024,38 +1024,80 @@ async def how_it_works(request: Request, lang: Optional[str] = None):
 async def tos():
     """Render the Terms of Service page."""
     content = """
-      <div class="card">
+        <div class="card">
         <h2>Terms of Service – BlockSpin Appeals Portal</h2>
-        <p class="muted">The BlockSpin Appeals Portal provides a formal process for requesting a review of moderation actions. By accessing or using this portal, you acknowledge and agree to the terms outlined below.</p>
+
+        <p class="muted">
+            The BlockSpin Appeals Portal provides a formal process for requesting a review of
+            moderation actions taken within the BlockSpin community. By accessing or using
+            this portal, you agree to the terms outlined below.
+        </p>
+
         <h3>User Responsibilities</h3>
         <ul class="muted" style="margin-left:18px;">
-          <li>Provide accurate, complete, and truthful information in all appeal submissions</li>
-          <li>Include relevant context and supporting details related to the moderation action</li>
-          <li>Submit a single appeal per incident unless explicitly instructed otherwise</li>
+            <li>Provide accurate, complete, and truthful information in all appeal submissions</li>
+            <li>Include relevant context and supporting details related to the moderation action</li>
+            <li>Submit only one appeal per incident unless explicitly instructed otherwise</li>
+            <li>Ensure that submitted content does not violate applicable laws or platform rules</li>
         </ul>
+
         <h3>Prohibited Conduct</h3>
         <ul class="muted" style="margin-left:18px;">
-          <li>Attempting to evade bans or sanctions through alternate accounts or methods</li>
-          <li>Submitting false, misleading, or fabricated information or evidence</li>
-          <li>Harassing, threatening, or abusing moderation staff</li>
-          <li>Using automated tools, scripts, or mass-submission methods</li>
-          <li>Sharing or misusing this portal for spam, abuse, or coordinated disruption</li>
+            <li>Attempting to evade bans or sanctions through alternate accounts or methods</li>
+            <li>Submitting false, misleading, or fabricated information or evidence</li>
+            <li>Harassing, threatening, impersonating, or abusing moderation staff</li>
+            <li>Using automated tools, scripts, bots, or mass-submission techniques</li>
+            <li>Submitting spam, malicious content, or coordinated disruption attempts</li>
+            <li>Sharing personal data of other individuals without authorization</li>
         </ul>
-        <h3>Review and Enforcement</h3>
+
+        <h3>Review Process and Enforcement</h3>
         <ul class="muted" style="margin-left:18px;">
-          <li>All appeals are reviewed at the discretion of BlockSpin moderators</li>
-          <li>Decisions made through this process may be final and irreversible</li>
-          <li>Violations of these terms may result in appeal denial, additional enforcement actions, or permanent loss of appeal privileges</li>
+            <li>All appeals are reviewed by authorized BlockSpin moderators</li>
+            <li>Appeal outcomes are determined at the moderators’ discretion based on available information</li>
+            <li>Decisions may be final and are not guaranteed to result in reversal or modification</li>
+            <li>Abuse of the appeals process may result in denial of the appeal, additional enforcement actions, or permanent loss of appeal privileges</li>
         </ul>
+
         <h3>Data Collection and Logging</h3>
-        <p class="muted">To maintain the integrity and security of the appeals process, BlockSpin may collect and process:</p>
+        <p class="muted">
+            To maintain the integrity, security, and fairness of the appeals process,
+            BlockSpin may collect and process:
+        </p>
         <ul class="muted" style="margin-left:18px;">
-          <li>Appeal content and associated account identifiers</li>
-          <li>IP address, network metadata, and basic device information</li>
+            <li>Appeal submissions and related content</li>
+            <li>Associated platform account identifiers (such as Roblox and Discord IDs)</li>
+            <li>IP address, network metadata, and basic device or browser information</li>
         </ul>
-        <p class="muted">This data is used solely for moderation review, fraud prevention, and system security purposes. By continuing, you confirm that you understand and agree to these terms.</p>
-        <div class="btn-row" style="margin-top:10px;"><a class="btn secondary" href="/">Back home</a></div>
-      </div>
+        <p class="muted">
+            This data is used solely for moderation review, fraud and abuse prevention,
+            internal auditing, and system security, in accordance with the Privacy Notice.
+        </p>
+
+        <h3>Privacy and Data Requests</h3>
+        <p class="muted">
+            Personal data is handled in accordance with the BlockSpin Privacy Notice.
+            Requests related to data access, correction, or removal may be submitted by
+            emailing <strong>hello@csnsor.nl</strong>.
+        </p>
+
+        <h3>Changes to These Terms</h3>
+        <p class="muted">
+            BlockSpin may update these Terms of Service at any time to reflect operational,
+            legal, or policy changes. Continued use of the portal constitutes acceptance
+            of the updated terms.
+        </p>
+
+        <p class="muted">
+            By using this portal, you confirm that you have read, understood, and agreed
+            to these Terms of Service.
+        </p>
+
+        <div class="btn-row" style="margin-top:10px;">
+            <a class="btn secondary" href="/">Back home</a>
+        </div>
+        </div>
+
     """
     return HTMLResponse(render_page("Terms of Service", content), headers={"Cache-Control": "no-store"})
 
@@ -1064,38 +1106,87 @@ async def tos():
 async def privacy():
     """Render the Privacy Policy page."""
     content = """
-      <div class="card">
+        <div class="card">
         <h2>Privacy Notice – BlockSpin Appeals Portal</h2>
+
+        <p class="muted">
+            This Privacy Notice explains how BlockSpin collects, uses, and protects information
+            submitted through the BlockSpin Appeals Portal.
+        </p>
+
+        <h3>Who We Are</h3>
+        <p class="muted">
+            The BlockSpin Appeals Portal is operated by the BlockSpin community moderation team.
+            For privacy-related questions or requests, including data access or removal,
+            please contact us at <strong>hello@csnsor.nl</strong>.
+        </p>
+
         <h3>Information We Collect</h3>
         <ul class="muted" style="margin-left:18px;">
-          <li>Appeal submissions and related content</li>
-          <li>Account identifiers associated with the appeal</li>
-          <li>IP address and approximate geographic region</li>
-          <li>Basic device and browser information (user agent)</li>
-          <li>Limited message or event context necessary to verify moderation actions</li>
+            <li>Appeal submissions and related content</li>
+            <li>Platform account identifiers (e.g., Roblox User ID, Discord User ID)</li>
+            <li>Current usernames associated with those accounts</li>
+            <li>IP address and approximate geographic region (country or region level)</li>
+            <li>Basic device and browser information (user agent)</li>
+            <li>Limited message or event context necessary to verify moderation actions</li>
         </ul>
+
         <h3>How We Use Your Information</h3>
-        <p class="muted">Collected data is used strictly for legitimate operational purposes, including:</p>
+        <p class="muted">
+            Collected information is used strictly for legitimate community and security purposes, including:
+        </p>
         <ul class="muted" style="margin-left:18px;">
-          <li>Authentication and access security</li>
-          <li>Fraud, abuse, and ban-evasion prevention</li>
-          <li>Moderation review and decision-making</li>
-          <li>Internal auditing and accountability</li>
+            <li>Authentication and identity verification via OAuth</li>
+            <li>Preventing fraud, abuse, and ban evasion</li>
+            <li>Reviewing and resolving moderation appeals</li>
+            <li>Maintaining internal accountability and audit logs</li>
+            <li>Protecting the integrity and safety of the BlockSpin community</li>
         </ul>
+
+        <h3>Authentication Providers</h3>
+        <p class="muted">
+            This portal uses third-party authentication services (OAuth 2.0), including Roblox and Discord.
+            We receive basic account identifiers and public profile information necessary to verify identity.
+            OAuth access tokens are not stored beyond what is required for authentication.
+        </p>
+
         <h3>Data Sharing</h3>
         <ul class="muted" style="margin-left:18px;">
-          <li>Access to appeal data is limited to authorized BlockSpin staff</li>
-          <li>Information may be disclosed if required to comply with legal or regulatory obligations</li>
-          <li>BlockSpin does not sell, rent, or trade user data</li>
+            <li>Access to appeal data is restricted to authorized BlockSpin moderation staff</li>
+            <li>Information may be disclosed if required to comply with applicable laws or legal requests</li>
+            <li>BlockSpin does not sell, rent, or trade personal data</li>
         </ul>
+
         <h3>Data Retention</h3>
         <ul class="muted" style="margin-left:18px;">
-          <li>Data is retained only as long as necessary for security, compliance, and operational review</li>
-          <li>Requests for data removal or access may be submitted to moderators and will be evaluated in accordance with internal policies and applicable laws</li>
+            <li>Denied appeals are typically retained for up to 12 months for audit and abuse prevention</li>
+            <li>Approved appeals retain a minimal record of the decision for moderation history</li>
+            <li>Security-related logs may be retained for a limited period to prevent abuse</li>
         </ul>
-        <p class="muted">By using this portal, you acknowledge and accept this Privacy Notice.</p>
-        <div class="btn-row" style="margin-top:10px;"><a class="btn secondary" href="/">Back home</a></div>
-      </div>
+
+        <h3>Your Rights</h3>
+        <p class="muted">
+            Depending on your jurisdiction, you may have the right to request access to, correction of,
+            or deletion of your personal data, or to object to certain processing.
+            Requests can be submitted by emailing <strong>hello@csnsor.nl</strong> and will be reviewed
+            in accordance with applicable laws and operational requirements.
+        </p>
+
+        <h3>Cookies and Tracking</h3>
+        <p class="muted">
+            This site does not use advertising cookies or third-party tracking technologies.
+            Essential session or security-related storage may be used to ensure proper operation.
+        </p>
+
+        <p class="muted">
+            By using this portal, you acknowledge and accept this Privacy Notice.
+        </p>
+
+        <div class="btn-row" style="margin-top:10px;">
+            <a class="btn secondary" href="/">Back home</a>
+        </div>
+        </div>
+
     """
     return HTMLResponse(render_page("Privacy", content), headers={"Cache-Control": "no-store"})
 

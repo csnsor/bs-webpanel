@@ -185,7 +185,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
           .lang-option {{ width:100%;display:flex;align-items:center;gap:8px;padding:8px 10px;border:none;background:transparent;color:inherit;border-radius:8px;cursor:pointer;text-align:left; }}
           .lang-option:hover {{ background:var(--card-bg-3); }}
           .lang-option--active {{ outline:1px solid var(--border-strong, #5c5cff); background:var(--card-bg-3); }}
-          .lang-flag {{ width:20px; text-align:center; }}
+          .lang-flag {{ width:20px; text-align:center; font-family: "Twemoji", "Noto Color Emoji", "Segoe UI Emoji", system-ui; }}
           .lang-name {{ flex:1; font-weight:600; }}
           @media (max-width: 768px) {{
             .lang-popover {{ left:0; right:auto; }}

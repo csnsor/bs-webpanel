@@ -58,14 +58,29 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     script_nonce = strings.get("script_nonce") or secrets.token_urlsafe(12)
     full_script = script_block or ""
     lang_switch_label = html.escape(strings.get("language_switch", "Switch language"))
-    current_flag = html.escape((LANG_META.get(lang) or {}).get("flag", "🌐"))
+
+    flag_img_map = {
+        "en": "/static/flags/us.svg",
+        "es": "/static/flags/es.svg",
+        "ar": "/static/flags/sa.svg",
+        "th": "/static/flags/th.svg",
+    }
+
+    def render_lang_flag(code: str, meta: dict) -> str:
+        flag_img = flag_img_map.get(code)
+        if flag_img:
+            return f'<img class="lang-flag-img" src="{html.escape(flag_img)}" alt="" aria-hidden="true" loading="lazy" decoding="async" />'
+        flag_text = meta.get("flag") or "\U0001F310"
+        return html.escape(flag_text)
+
+    current_flag_html = render_lang_flag(lang, LANG_META.get(lang) or {})
     lang_options: List[str] = []
     for code, meta in LANG_META.items():
         label = html.escape(meta.get("name") or code.upper())
-        flag = html.escape(meta.get("flag") or "")
+        flag_html = render_lang_flag(code, meta)
         active_cls = "lang-option--active" if code == lang else ""
         lang_options.append(
-            f'<button class="lang-option {active_cls}" data-lang="{code}" aria-label="{label}"><span class="lang-flag">{flag}</span><span class="lang-name">{label}</span></button>'
+            f'<button class="lang-option {active_cls}" data-lang="{code}" aria-label="{label}"><span class="lang-flag">{flag_html}</span><span class="lang-name">{label}</span></button>'
         )
     lang_popover = (
         f'<div class="lang-popover" id="langPopover" role="menu">{"".join(lang_options)}</div>'
@@ -185,7 +200,8 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
           .lang-option {{ width:100%;display:flex;align-items:center;gap:8px;padding:8px 10px;border:none;background:transparent;color:inherit;border-radius:8px;cursor:pointer;text-align:left; }}
           .lang-option:hover {{ background:var(--card-bg-3); }}
           .lang-option--active {{ outline:1px solid var(--border-strong, #5c5cff); background:var(--card-bg-3); }}
-          .lang-flag {{ width:20px; text-align:center; font-family: "Twemoji", "Noto Color Emoji", "Segoe UI Emoji", system-ui; }}
+          .lang-flag {{ width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; text-align:center; font-family: "Twemoji", "Noto Color Emoji", "Segoe UI Emoji", system-ui; }}
+          .lang-flag-img {{ width:18px; height:12px; border-radius:3px; box-shadow: 0 0 0 1px rgba(255,255,255,0.14); }}
           .lang-name {{ flex:1; font-weight:600; }}
           @media (max-width: 768px) {{
             .lang-popover {{ left:0; right:auto; }}
@@ -236,7 +252,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
               <a href="/status">{nav_status}</a>
               <div class="lang-switch">
                 <button class="lang-toggle" id="footerLangToggle" aria-haspopup="true" aria-expanded="false">
-                  <span class="lang-flag">{current_flag}</span>
+                  <span class="lang-flag">{current_flag_html}</span>
                   <span class="lang-label">{lang_switch_label}</span>
                 </button>
                 {lang_popover}

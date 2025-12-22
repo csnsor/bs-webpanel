@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 18" role="img" aria-label="United States flag">
+  <rect width="24" height="18" fill="#ffffff" />
+  <rect y="0" width="24" height="2" fill="#b22234" />
+  <rect y="4" width="24" height="2" fill="#b22234" />
+  <rect y="8" width="24" height="2" fill="#b22234" />
+  <rect y="12" width="24" height="2" fill="#b22234" />
+  <rect y="16" width="24" height="2" fill="#b22234" />
+  <rect x="0" y="0" width="10" height="8" fill="#3c3b6e" />
+  <circle cx="2" cy="2" r="0.6" fill="#ffffff" />
+  <circle cx="4" cy="2" r="0.6" fill="#ffffff" />
+  <circle cx="6" cy="2" r="0.6" fill="#ffffff" />
+  <circle cx="8" cy="2" r="0.6" fill="#ffffff" />
+  <circle cx="2" cy="4" r="0.6" fill="#ffffff" />
+  <circle cx="4" cy="4" r="0.6" fill="#ffffff" />
+  <circle cx="6" cy="4" r="0.6" fill="#ffffff" />
+  <circle cx="8" cy="4" r="0.6" fill="#ffffff" />
+  <circle cx="2" cy="6" r="0.6" fill="#ffffff" />
+  <circle cx="4" cy="6" r="0.6" fill="#ffffff" />
+  <circle cx="6" cy="6" r="0.6" fill="#ffffff" />
+  <circle cx="8" cy="6" r="0.6" fill="#ffffff" />
+</svg>

@@ -131,17 +131,16 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
     """
     lang_script = """
         (function(){
-          const toggle = document.getElementById('langToggle');
-          const footerToggle = document.getElementById('footerLangToggle');
+          const toggles = Array.from(document.querySelectorAll('.lang-toggle'));
           const pop = document.getElementById('langPopover');
-          if(!toggle || !pop) return;
-          const open = () => { pop.classList.add('open'); toggle.setAttribute('aria-expanded','true'); };
-          const close = () => { pop.classList.remove('open'); toggle.setAttribute('aria-expanded','false'); };
+          if(!toggles.length || !pop) return;
+          const setExpanded = (state) => toggles.forEach(btn => btn.setAttribute('aria-expanded', state ? 'true' : 'false'));
+          const open = () => { pop.classList.add('open'); setExpanded(true); };
+          const close = () => { pop.classList.remove('open'); setExpanded(false); };
           const togglePop = (e) => { e.preventDefault(); pop.classList.contains('open') ? close() : open(); };
-          toggle.addEventListener('click', togglePop);
-          if (footerToggle) footerToggle.addEventListener('click', togglePop);
+          toggles.forEach(btn => btn.addEventListener('click', togglePop));
           document.addEventListener('click', (e) => {
-            if (pop.contains(e.target) || toggle.contains(e.target) || (footerToggle && footerToggle.contains(e.target))) return;
+            if (pop.contains(e.target) || toggles.some(btn => btn.contains(e.target))) return;
             close();
           });
           pop.querySelectorAll('.lang-option').forEach(btn => {
@@ -218,14 +217,6 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
               <a class="nav__link nav__link--muted" href="{INVITE_LINK}" rel="noreferrer">{nav_discord}</a>
             </nav>
 
-            <div class="lang-switch">
-              <button class="lang-toggle" id="langToggle" aria-haspopup="true" aria-expanded="false">
-                <span class="lang-flag">{current_flag}</span>
-                <span class="lang-label">{lang_switch_label}</span>
-              </button>
-              {lang_popover}
-            </div>
-
             {top_actions}
           </div>
         </header>
@@ -243,7 +234,13 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
               <a href="/tos">{nav_terms}</a>
               <a href="/privacy">{nav_privacy}</a>
               <a href="/status">{nav_status}</a>
-              <button class="lang-toggle" id="footerLangToggle" style="margin-left:8px;background:none;border:1px solid var(--border);">{lang_switch_label}</button>
+              <div class="lang-switch">
+                <button class="lang-toggle" id="footerLangToggle" aria-haspopup="true" aria-expanded="false">
+                  <span class="lang-flag">{current_flag}</span>
+                  <span class="lang-label">{lang_switch_label}</span>
+                </button>
+                {lang_popover}
+              </div>
             </div>
           </footer>
         </main>

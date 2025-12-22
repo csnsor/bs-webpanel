@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+from pathlib import Path
 from typing import Dict, Optional
 
 from fastapi import Request
@@ -119,6 +122,8 @@ LANG_STRINGS: Dict[str, Dict[str, str]] = {
 LANG_CACHE: Dict[str, Dict[str, str]] = {}
 # Per-text translation cache to avoid repeated network calls for the same phrase.
 TRANSLATION_CACHE: Dict[tuple[str, str, Optional[str]], str] = {}
+_LANG_CACHE_FILE = Path(__file__).resolve().parent / "lang_cache.json"
+_LANG_CACHE_LOCK = asyncio.Lock()
 
 # Language display metadata for UI selectors.
 LANG_META: Dict[str, Dict[str, str]] = {
@@ -127,6 +132,37 @@ LANG_META: Dict[str, Dict[str, str]] = {
     "ar": {"name": "العربية", "flag": "🇸🇦"},
     "th": {"name": "ไทย", "flag": "🇹🇭"},
 }
+
+
+def _load_lang_cache_from_disk() -> None:
+    """Warm the in-memory language cache from disk so we don't re-translate on restart."""
+    try:
+        if not _LANG_CACHE_FILE.exists():
+            return
+        data = json.loads(_LANG_CACHE_FILE.read_text(encoding="utf-8") or "{}")
+        if isinstance(data, dict):
+            for code, strings in data.items():
+                if isinstance(strings, dict):
+                    LANG_CACHE[normalize_language(code)] = strings
+    except Exception as exc:
+        logging.warning("Failed to load language cache: %s", exc)
+
+
+async def _persist_lang_cache() -> None:
+    """Persist merged language strings to disk so future visitors skip translation API calls."""
+    try:
+        async with _LANG_CACHE_LOCK:
+            payload = {code: strings for code, strings in LANG_CACHE.items()}
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, lambda: _LANG_CACHE_FILE.write_text(text, encoding="utf-8")
+            )
+    except Exception as exc:
+        logging.warning("Failed to persist language cache: %s", exc)
+
+
+_load_lang_cache_from_disk()
 
 
 async def translate_text(text: str, target_lang: str = "en", source_lang: Optional[str] = None) -> str:
@@ -222,6 +258,7 @@ async def get_strings(lang: str) -> Dict[str, str]:
             merged[key] = merged.get(key, base[key])
 
     LANG_CACHE[lang] = merged
+    await _persist_lang_cache()
     return merged
 
 

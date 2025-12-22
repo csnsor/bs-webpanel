@@ -99,7 +99,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
         "script-src 'self' 'unsafe-inline'; "
         "connect-src 'self' https://discord.com https://*.discord.com; "
     )
-    favicon = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%237c5cff'/%3E%3Cpath d='M42 10 28 24l4 4-6 6 4 4-6 6-6-6 6-6-4-4 6-6 4 4 6-6 4 4 6-6-10-10Z' fill='white'/%3E%3C/svg%3E"
+    favicon = "/static/favicon.svg?v=1"
     announcement_html = ""
     current_announcement = getattr(state, "_announcement_text", None)
     current_epoch = getattr(state, "_session_epoch", 0)
@@ -201,7 +201,7 @@ def render_page(title: str, body_html: str, lang: str = "en", strings: Optional[
           .lang-option:hover {{ background:var(--card-bg-3); }}
           .lang-option--active {{ outline:1px solid var(--border-strong, #5c5cff); background:var(--card-bg-3); }}
           .lang-flag {{ width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; text-align:center; font-family: "Twemoji", "Noto Color Emoji", "Segoe UI Emoji", system-ui; }}
-          .lang-flag-img {{ width:18px; height:12px; border-radius:3px; box-shadow: 0 0 0 1px rgba(255,255,255,0.14); }}
+          .lang-flag-img {{ width:18px; height:12px; border-radius:0; box-shadow:none; }}
           .lang-name {{ flex:1; font-weight:600; }}
           @media (max-width: 768px) {{
             .lang-popover {{ left:0; right:auto; }}

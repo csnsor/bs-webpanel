@@ -127,10 +127,11 @@ _LANG_CACHE_LOCK = asyncio.Lock()
 
 # Language display metadata for UI selectors.
 LANG_META: Dict[str, Dict[str, str]] = {
-    "en": {"name": "English", "flag": "🇺🇸"},
-    "es": {"name": "Español", "flag": "🇪🇸"},
-    "ar": {"name": "العربية", "flag": "🇸🇦"},
-    "th": {"name": "ไทย", "flag": "🇹🇭"},
+    # Use explicit code points so Windows terminals don't mangle the emoji.
+    "en": {"name": "English", "flag": "\U0001F1FA\U0001F1F8"},  # US
+    "es": {"name": "Español", "flag": "\U0001F1EA\U0001F1F8"},  # Spain
+    "ar": {"name": "العربية", "flag": "\U0001F1F8\U0001F1E6"},  # Saudi Arabia
+    "th": {"name": "ไทย", "flag": "\U0001F1F9\U0001F1ED"},     # Thailand
 }
 
 

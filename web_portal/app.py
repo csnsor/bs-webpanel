@@ -21,6 +21,7 @@ from .routers.interactions import router as interactions_router
 from .routers.pages import router as pages_router
 from .routers.status_api import router as status_router
 from .services.sessions import serializer
+from .services.supabase import get_portal_flag
 from .settings import validate_required_envs
 from . import state
 from .ui import render_error
@@ -70,6 +71,40 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def maintenance_gate(request: Request, call_next):
+        # Allow static assets through so the error page can render properly.
+        path = request.url.path
+        if path.startswith("/static"):
+            return await call_next(request)
+
+        unavailable_flag = await get_portal_flag("unavailable", None)
+        is_unavailable = False
+        if isinstance(unavailable_flag, bool):
+            is_unavailable = unavailable_flag
+        elif isinstance(unavailable_flag, str):
+            is_unavailable = unavailable_flag.strip().lower() == "true"
+
+        if is_unavailable:
+            announcement = await get_portal_flag("announcement", None) or getattr(state, "_announcement_text", None)
+            message = "The appeals portal is currently unavailable."
+            if announcement:
+                message = f"{message} {announcement}"
+
+            if wants_html(request):
+                lang = await detect_language(request)
+                strings = await get_strings(lang)
+                return render_error(
+                    "Portal unavailable",
+                    message,
+                    status_code=503,
+                    lang=lang,
+                    strings=strings,
+                )
+            return JSONResponse(status_code=503, content={"detail": message})
+
+        return await call_next(request)
 
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):

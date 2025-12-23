@@ -335,8 +335,7 @@ def render_error(
         <div class="error-box">{safe_msg}</div>
 
         <div class="btn-row" style="justify-content:center;">
-          <a class="btn" href="/" aria-label="Back home">{strings['error_home']}</a>
-          <a class="btn secondary" href="javascript:location.reload();" aria-label="Retry action">{strings['error_retry']}</a>
+          <a class="btn" href="/" aria-label="Back home">{strings['error_home']}</a>        </div>
         </div>
       </div>
     """
